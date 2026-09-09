@@ -1,0 +1,273 @@
+# Dryad（树灵）设计
+
+Dryad 是一个只读的桌面工具：把本机多个 git 仓库（project）的全部 worktree 汇总到一个窗口里，回答四个问题——哪些 worktree 有未提交的改动、哪些分支有未推送的提交、哪些分支已合入主干可以删除、哪些已经长期闲置——并能查看任一 worktree 的 diff。
+
+界面以 `design/` 下的可点击原型为准（§5）。
+
+## 0. 定位与边界
+
+**目标**
+
+- 跨 project 总览：一屏看到所有 project 的所有 worktree 及其状态。
+- 单 project 下钻：看某个 project 的 worktree 列表。
+- 单 worktree 明细：状态、工作区 diff、分支相对主干的 diff。
+- 三平台：macOS、Linux、Windows。
+
+**非目标**
+
+- 不修改任何仓库：不删 worktree、不 prune、不 checkout、不暂存、不丢弃改动、不联网。唯一可写的对象是 Dryad 自己的 project 列表。
+- 不自动发现仓库：project 由用户手工加入。
+- 不监听文件系统、不定时刷新：刷新由用户触发。
+- 不检测 squash merge：「已合入」按祖先关系判定。
+
+**术语**
+
+| 词 | 含义 |
+|---|---|
+| project | 用户加入的一个 git 仓库，以其顶层目录标识 |
+| 主工作树 | 仓库自身的检出目录，`git worktree list` 的首条 |
+| worktree | 该仓库的任一检出目录，含主工作树 |
+| 主干引用 | 用来判定「已合入」与做分支 diff 的基准，见 §3.1 |
+| 引用层数据 | 只依赖 `.git` 中引用即可得到的数据（分支、上游、合入、提交时间），不需要工作目录存在 |
+
+## 1. 架构与组件
+
+```
++------------------------------------------------------------------+
+|                       Tauri window (webview)                      |
+|  +------------------------------------------------------------+  |
+|  |  Frontend (TypeScript, no framework)                        |  |
+|  |    state:  projects, worktrees, selection, tree, filters,   |  |
+|  |            sort, diff cache                                 |  |
+|  |    views:  toolbar | sidebar tree | main pane               |  |
+|  |    api:    typed command wrappers + event listeners         |  |
+|  +-----------------------^-------------------------^-----------+  |
+|            commands      |                         |  events       |
+|  +-----------------------v-------------------------+-----------+  |
+|  |  Backend (Rust)                                              |  |
+|  |    commands:  list / add / remove projects, scan, diff       |  |
+|  |    registry:  persisted project list (JSON, app config dir)  |  |
+|  |    scanner:   bounded-parallel git queries -> emits events   |  |
+|  |    differ:    on-demand file lists and per-file patches      |  |
+|  |    git:       locate binary | run with timeout | parse       |  |
+|  +------------------------------+-------------------------------+  |
+|                                 | spawn                            |
+|                       +---------v----------+                       |
+|                       |   git executable   |                       |
+|                       +--------------------+                       |
++------------------------------------------------------------------+
+```
+
+**后端五个单元，各有单一职责。**
+
+- **git 执行层**：唯一的 git 调用入口。启动时定位 git 可执行文件（§9）；每次调用指定工作目录、超时，捕获标准输出与错误输出，非零退出码转为错误，输出按 UTF-8 有损解码；路径类输出以 NUL 分隔取原始字节。超时、定位、编码这三个跨平台差异最大的问题只在此处出现。
+- **注册表**：持久化的 project 列表。加入时校验目录属于某个仓库并规范化为仓库顶层路径，按顶层路径去重；支持移除。**注册表是应用唯一的持久化状态。**
+- **扫描器**：接收 project 列表，按 §3.1 的两级查询、§4 的并发模型执行，结果按 project 粒度经事件流式推送。
+- **diff 查询器**：按 §3.2 响应选中 worktree 后的按需查询。
+- **解析器**：对 git 各类输出的纯函数解析，不做 I/O，独立可测。
+
+**前端三个单元。**
+
+- **状态**：project 与 worktree 数组、各 project 扫描状态、当前选中项、树的展开集合、筛选与排序条件、diff 缓存。事件到达时合并进状态，视图由状态重绘。
+- **视图**：工具栏、侧栏树、主区（三种模式，§5）。
+- **命令与事件封装**：集中声明与后端共享的数据类型。命令面约十个，手写签名即可。
+
+## 2. 数据模型
+
+| 实体 | 字段 |
+|---|---|
+| project | 顶层路径（唯一键）、显示名（目录名）、主干引用（解析结果，可为空）、扫描状态（待扫描 / 扫描中 / 完成 / 失败）、project 级错误 |
+| worktree | 所属 project、路径、是否主工作树、分支名或 detached 标记、HEAD 提交、锁定原因、可修剪原因（后两者来自 git 自身）、未提交改动（已暂存数、未暂存数、未跟踪数）、上游状态（有上游且 ahead / behind 计数 · 无上游 · 上游已消失）、已合入主干（是 / 否 / 无法判定）、最近提交时间、行级错误 |
+| diff 文件条目 | 路径、变更类型（修改 / 新增 / 删除 / 重命名 / 未跟踪）、是否已暂存（仅工作区 diff）、新增行数、删除行数、是否二进制 |
+| diff 补丁 | 所属文件、分块列表（每块含头信息与带符号的行）、是否被截断 |
+
+**派生判定**（筛选片与树的计数据此计算）：
+
+| 判定 | 定义 |
+|---|---|
+| 有改动 | 已暂存、未暂存、未跟踪任一计数大于零 |
+| 未推送 | ahead 大于零，或无上游，或上游已消失 |
+| 已合入 | 已合入主干为「是」 |
+| 闲置 | 最近提交距今超过闲置阈值 |
+| 可安全删除 | 已合入 ∧ 无改动 ∧ 非未推送；界面上以筛选片的交集表达，不单设一列 |
+
+**持久化边界**：只持久化 project 路径列表（JSON，含格式版本号，位于各平台的应用配置目录）。扫描结果与 diff 全为内存态，每次启动与刷新重新计算——不存在缓存失效问题，也不需要迁移逻辑。
+
+**配置项**（同一配置目录的配置文件；界面首版只暴露闲置阈值）：
+
+| 项 | 默认 |
+|---|---|
+| git 子进程并发上限 | 8 |
+| 单次 git 调用超时 | 60 秒 |
+| 闲置阈值 | 30 天 |
+| 补丁行数上限 | 5000 |
+| diff 文件数上限 | 500 |
+
+## 3. git 查询策略
+
+### 3.1 扫描：仓库级批量 + worktree 级单发
+
+五类信息里只有「未提交改动」必须在 worktree 目录内读取（它读该检出的索引与工作文件）；其余全是引用层数据，同一仓库的所有 worktree 共享，按仓库查一次即可。
+
+仓库级查询（在仓库顶层执行，每仓库各一次）：
+
+| # | 查询 | 得到 |
+|---|---|---|
+| 1 | 枚举 worktree（porcelain 输出） | 每个 worktree 的路径、HEAD、分支或 detached、bare / locked / prunable 标志；首条为主工作树 |
+| 2 | 解析主干引用 | 远端 `origin/HEAD` 的符号引用目标；不存在则依次探测本地 `main`、`master`；都没有则主干为空，「已合入」一律「无法判定」，分支 diff 不可用 |
+| 3 | 列举全部本地分支的提交者时间戳 | 所有 worktree 的「最近提交时间」 |
+| 4 | 列举已合入主干的分支集合 | 所有 worktree 的「已合入」判定（祖先关系） |
+
+worktree 级查询（在各 worktree 目录内执行，每 worktree 一次）：
+
+| # | 查询 | 得到 |
+|---|---|---|
+| 5 | 状态查询（porcelain v2，带分支头信息） | 已暂存 / 未暂存 / 未跟踪计数与文件清单、上游名称、ahead / behind 计数；上游已配置但引用缺失即「上游已消失」 |
+
+detached HEAD 的 worktree 没有分支，查询 3、4 不覆盖，逐个回退：单次取 HEAD 提交时间、单次判 HEAD 是否为主干祖先；上游恒为「无」。
+
+调用量约为「仓库数 × 4 + worktree 数 × 1」。廉价查询随仓库数增长，唯一的昂贵查询随 worktree 数增长。
+
+### 3.2 按需 diff 查询
+
+diff 不进扫描流程。选中 worktree 时，先重跑该 worktree 的状态查询（刷新这一行，保证文件清单是此刻的而非扫描时的快照），再按当前标签发起查询；切换标签再查另一类。
+
+| 标签 | 文件清单与计数 | 单文件补丁 |
+|---|---|---|
+| 工作区 | 已暂存：索引对 HEAD 的 numstat；未暂存：工作区对索引的 numstat；未跟踪：来自状态查询，只列名 | 选中文件时取该文件的补丁（已暂存 / 未暂存各一路） |
+| 相对主干 | 三点 diff（自 merge-base 起）的 numstat | 选中文件时取该文件的三点补丁 |
+
+**先清单后补丁**：清单廉价且一次到位，补丁只为当前选中的一个文件取。
+
+不发起查询的情形：主工作树没有「相对主干」；已合入分支的三点 diff 必为空，直接显示说明；工作目录丢失的 worktree 没有工作区 diff，但分支 diff 是引用层数据、照常可用（从主工作树目录执行）。
+
+边界：补丁超过行数上限则截断并标注；二进制文件在 numstat 中以 `-` 标出，只列不取；重命名显示「旧 → 新」；路径以 NUL 分隔取原始字节；补丁 UTF-8 有损解码。
+
+缓存：按（worktree、标签、文件）缓存，刷新或扫描代号变更即清空。每个 diff 结果携带请求序号，前端丢弃不属于当前选中项的迟到结果——与 §4 的扫描代号同一模式。
+
+### 3.3 为何调用 git 可执行文件而非库
+
+状态查询、祖先判定、三点 diff 的语义必须与用户自己的 git 配置一致（fsmonitor、untracked cache、worktree 配置、diff 重命名检测等），库实现对 worktree 的支持也不完整。代价是必须解决 GUI 进程定位 git 的问题（§9）。
+
+## 4. 数据流与并发
+
+```
+  user: launch / refresh / add project / select worktree
+            |
+            v
+  +------------------+   load / save   +--------------------+
+  |  frontend state  | <-------------> |  registry (JSON)   |
+  +------------------+                 +--------------------+
+            |  invoke scan(generation N)
+            v
+  +-----------------------------------------------------------+
+  |  scanner  (one global semaphore: at most K git processes)  |
+  |                                                            |
+  |   per project, in parallel:                                |
+  |     [1] list worktrees   \                                 |
+  |     [2] resolve main ref  |--> emit project:scanned        |
+  |     [3] commit times      |    (rows appear, some cells    |
+  |     [4] merged set       /      still pending)             |
+  |          |                                                 |
+  |          v  per worktree, in parallel:                     |
+  |     [5] status --------------> emit worktree:status        |
+  |     [detached only] time + ancestry fallback               |
+  |                                                            |
+  |   any failure --> emit project:failed / worktree:failed    |
+  +-----------------------------------------------------------+
+            |  every event carries generation N
+            v
+  frontend: drop events with generation != current,
+            merge the rest into state, re-render
+
+  select worktree --> invoke status(wt) + diff list(wt, tab)   [request seq S]
+  select file     --> invoke diff patch(wt, tab, file)          [request seq S]
+  frontend: drop diff results whose seq != current selection
+```
+
+三条规则：
+
+1. **单一全局并发上限**约束所有 git 子进程，无论来自扫描还是 diff。多个 project 各自并行、再各自并行 worktree，会瞬间拉起数百个进程压垮磁盘；一个信号量即可避免。
+2. **流式推送，两阶段填充**：仓库级四项完成即推送该 project 的全部行（分支、提交时间、合入状态已知，脏状态与上游待定）；每个 worktree 的状态查询完成再逐行补齐。用户在首个 project 完成时就能看到内容。
+3. **扫描代号**：每次扫描分配递增代号，所有事件携带代号；前端丢弃代号不等于当前的事件。刷新时上一轮尚在到达的迟到事件不会污染新结果，后端也无需实现取消。
+
+**刷新**：手动触发（按钮与快捷键），全量重扫；加入 project 时只扫新加入的那个。**超时**：每次 git 调用独立超时，超时只令该查询失败，按 §6 归层。
+
+## 5. 界面
+
+界面不在本文展开，以 `design/` 下的可点击原型为准——原型即规格：布局、列、单元格状态、颜色、筛选与排序行为、说明文案、空状态、键盘操作，均以原型的实际表现为准；实现须与之一致，要改先改原型。
+
+| 文件 | 内容 |
+|---|---|
+| `design/Main.dc.html` | 完整原型，打开在 worktree 视图；示例数据与全部交互逻辑在其脚本内 |
+| `design/Overview.dc.html` | 同一原型，打开在根节点；由 `design/gen-overview.sh` 从 Main 生成（仅初始视图与静态占位值不同），勿手改 |
+| `design/Empty.dc.html` | 零 project 的空状态 |
+| `design/canvas.json` | 画板布局与注释 |
+
+发布版本：https://claude.ai/code/artifact/a9e1e1a8-2955-44e5-8e68-3d3c76b5eaba（可调主题、闲置阈值、初始视图）。
+
+与其余章节的对应：主区按侧栏选中项切换三种模式（根节点 → 跨 project 扁平表，project → 该 project 的表，worktree → 状态与 §3.2 的两个 diff 标签）；筛选片按 §2 的派生判定计算，只在根节点且取交集；单元格的「待定」对应 §4 的两阶段填充；「从列表移除」只改注册表（§1）。
+
+## 6. 错误处理
+
+错误按层级隔离，上层失败不吞掉下层仍可得的数据：
+
+| 层级 | 情形 | 处理 |
+|---|---|---|
+| 全局 | 找不到 git 可执行文件 | 启动即检测；主区显示阻断横幅，列出已搜索的路径；可重试；不发起任何扫描 |
+| project | 路径不存在、不是仓库、仓库级查询失败 | 树节点标错，project 视图显示错误原文；保留在注册表并提供移除；其他 project 不受影响 |
+| worktree | 状态查询失败（目录丢失、权限、超时） | 该行标错，引用层数据照常显示；工作区 diff 标签显示错误，分支 diff 仍可用 |
+| diff 查询 | 单次失败 | 面板内显示错误与重试，不影响该行状态 |
+| 注册表 | 文件无法解析 | 不覆盖原文件：改名为带时间戳的备份，以空列表启动并提示 |
+| 加入 project | 非目录、非仓库、规范化后与已有重复 | 对话框内提示，不写注册表 |
+
+超时是每次 git 调用的属性，超时即视为该次查询失败，按上表归层。非 UTF-8 的路径与分支名有损显示并标记。
+
+**日志**：后端结构化日志记录每次 git 调用的命令、目录、耗时、退出码，不记录 diff 内容；错误面板可复制原文。
+
+## 7. 安全
+
+- 所有来自 git 的字符串（路径、分支名、diff 内容）一律作为文本插入界面，绝不拼进 HTML。分支名是他人可影响的输入。
+- 保持 Tauri 默认的内容安全策略；前端不申请 shell、文件系统等能力，所有系统访问经后端命令。
+- 除「加入 project」（其输入来自系统目录对话框）外，后端命令只接受注册表中已有的 project 与其枚举出的 worktree 作为参数，拒绝任意路径。
+- 不联网。
+
+## 8. 测试
+
+| 单元 | 方法 |
+|---|---|
+| 解析器 | 单元测试，夹具为真实 git 输出样本：worktree 枚举（bare / locked / prunable / detached）、状态 v2（上游消失、重命名、未跟踪）、分支时间戳、已合入集合、numstat（二进制、重命名）、unified diff 分块与行号 |
+| git 执行层 | 超时触发、非零退出码转错误、非 UTF-8 输出有损解码、可执行文件定位的回退顺序（临时目录放假 git） |
+| 扫描器 | 集成测试：临时目录用真实 git 建仓库与多个 worktree（脏、ahead、无上游、已合入、detached、锁定、目录删除后 prunable），跑完整扫描断言模型；断言事件顺序与代号过滤；断言单个 worktree 失败不波及其余；用计数器断言并发峰值不超上限 |
+| diff 查询 | 同一临时仓库：numstat 清单、单文件补丁、三点 diff、截断标注、二进制标注、已合入分支不发起查询 |
+| 注册表 | 加入 / 去重 / 规范化 / 移除 / 损坏文件备份 |
+| 命令层 | 只测参数校验与错误映射，保持薄 |
+| 前端纯函数 | 排序比较器（六列、方向、次序键）、筛选谓词与交集、树扁平化（展开与筛选）、diff 行号、相对时间 |
+| 前端状态归并 | 事件到达顺序、代号丢弃、两阶段填充 |
+
+解析器的单元测试证明「能读懂这份样本」，只有临时目录里的真实 git 才能证明「样本就是 git 会给的东西」，两者缺一即出现「测试全绿、上线即错」的缺口。
+
+首版不做端到端界面测试——交互已由原型验证，webview 自动化在三平台的成本远超收益。持续集成在 macOS、Linux、Windows 三平台构建并跑后端测试；前端测试跑一处即可。
+
+## 9. 平台与构建
+
+- **技术栈**：Tauri v2；后端 Rust；前端 Vite + TypeScript，不引入界面框架；命令签名手写，首版不用绑定生成器。
+- **webview**：macOS WKWebView；Windows WebView2（Windows 10/11 自带）；Linux WebKitGTK 4.1（Ubuntu 22.04+ / Debian 12+ 提供）。
+- **git 定位**：GUI 进程不继承 shell 的 `PATH`（macOS 与 Linux 的登录 shell 配置不生效）。启动时先修复 `PATH`，再在其中查找；找不到则回退到各平台的常见安装位置（macOS 的 Homebrew 目录、Windows 的 Git for Windows 默认目录）。
+- **路径**：按 git 输出显示，不做规范化；注册表去重时以规范化后的绝对路径比较。
+- **打包**：使用 Tauri 内置 bundler 产出 dmg / msi / deb / rpm / AppImage；Linux 的 AppImage 须在目标最低发行版上构建。
+
+## 10. 选型依据
+
+在去掉语言偏好、只按问题本身评估后，Tauri v2 优于 Wails v2 与 Electron：
+
+- Wails v2 已是维护线（v3 尚在 beta），三平台打包需自行处理 Linux；其唯一明显优势——从后端签名自动生成前端类型——在约十个命令的规模下无关紧要。
+- Electron 零系统依赖、三平台渲染一致，但体积约百倍、macOS / Linux 空闲内存四至六倍（Windows 上与 Tauri 持平，因 WebView2 本身就是 Chromium），且 Chromium 安全补丁责任落到应用作者。对「自用、常开」的查看器，Tauri 更合适；若日后要分发到他人的异构 Linux 机器，Electron 会翻转为更优。
+- 自绘方案（egui 等）零依赖，但要自行处理 CJK 字体与表格交互，收益抵不过代价。
+
+## 11. 已知限制
+
+- squash merge 的分支无法由祖先关系判定为已合入。
+- 「已合入」与「相对主干」都以本地已有的主干引用为准；不 fetch，远端的新变化在用户 fetch 之前不可见。
+- 未跟踪文件只列名，不展示内容。
+- 主干引用解析不到时（无 `origin/HEAD`、无本地 `main` / `master`），合入判定与分支 diff 均不可用。

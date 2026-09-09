@@ -1,0 +1,12 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1280, "h": 800, "title": "Worktree", "is_interactive": true },
+    { "file": "Overview.dc.html", "x": 1400, "y": 0, "w": 1280, "h": 800, "title": "Overview", "is_interactive": true },
+    { "file": "Empty.dc.html", "x": 0, "y": 960, "w": 1280, "h": 800, "title": "Empty state" }
+  ],
+  "annotations": [
+    { "id": "how-to-read", "x": 0, "y": -240, "w": 1280, "text": "Left: project tree (All projects → project → worktree). Selecting the root shows the cross-project table with AND-combined filter chips; a project shows its own worktrees; a worktree shows its status and two diff tabs (Working tree · vs main ref). Worktree and Overview are the same prototype opened on different nodes. Tweaks: theme, staleDays, initialView. Refresh replays the two-phase scan; Remove from list / Add project remove and restore a project." },
+    { "id": "empty-note", "x": 0, "y": 880, "w": 520, "text": "Zero-project state: what the window shows before any repository has been added. Not a loading state." }
+  ],
+  "launch": { "view": "focused", "file": "Main.dc.html" }
+}

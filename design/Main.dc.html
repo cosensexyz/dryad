@@ -1,0 +1,909 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f5f7; }
+    a { color: #2f66b8; } a:hover { color: #244f8f; }
+    [data-theme] a { color: var(--c-ahead); } [data-theme] a:hover { color: var(--fg); }
+    [data-theme="light"] {
+      --bg: #f4f5f7; --panel: #ffffff; --fg: #1b1f24; --muted: #6a717c; --faint: #7b828c;
+      --line: #e2e5e9; --line2: #cbd0d6; --hover: #eef0f3; --sel: #e3eaf6;
+      --chip: #eceef1; --chip-on: #1b1f24; --chip-on-fg: #ffffff;
+      --c-dirty: #b4651a; --c-ahead: #2f66b8; --c-merged: #2b8457; --c-stale: #7a55b8; --c-err: #c23b36;
+      --add-bg: #e6f4ec; --del-bg: #fbe9e8; --add-fg: #1e6b45; --del-fg: #a3322d; --hunk-bg: #f0f2f5;
+    }
+    [data-theme="dark"] {
+      --bg: #141619; --panel: #1a1d21; --fg: #e4e7ea; --muted: #8d949e; --faint: #79808a;
+      --line: #282c33; --line2: #373d46; --hover: #20242a; --sel: #243248;
+      --chip: #23272d; --chip-on: #e4e7ea; --chip-on-fg: #141619;
+      --c-dirty: #e2a052; --c-ahead: #75a6ea; --c-merged: #62c48f; --c-stale: #b493e6; --c-err: #ea6f69;
+      --add-bg: #1b2f24; --del-bg: #33201f; --add-fg: #7fd4a3; --del-fg: #f08b86; --hunk-bg: #232830;
+    }
+    .btn:hover { background: var(--hover) !important; }
+    .hdr:hover { color: var(--fg) !important; }
+    .row[data-sel="1"], .node[data-sel="1"], .file[data-sel="1"] { background: var(--sel); }
+    .row[data-sel="0"]:hover, .node[data-sel="0"]:hover, .file[data-sel="0"]:hover { background: var(--hover); }
+    input::placeholder { color: var(--faint); }
+    input:focus { outline: none; border-color: var(--c-ahead) !important; }
+  </style>
+</helmet>
+<div data-theme="{{theme}}" style="width: 1280px; height: 800px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--fg); font-family: 'IBM Plex Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 12.5px; line-height: 1.4;">
+
+  <div style="height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line);">
+    <button class="btn" onClick="{{addProject}}" title="Opens a folder picker in the app; in this prototype it restores the last project you removed" style="height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--fg); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"></path></svg>
+      <span>Add project</span>
+    </button>
+    <button class="btn" onClick="{{refresh}}" title="Re-scan every project" style="height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--fg); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"></path><path d="M13.5 3v3h-3"></path></svg>
+      <span>Refresh</span>
+    </button>
+    <div style="margin-left: 8px; height: 28px; width: 280px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 4px; background: var(--bg); color: var(--muted);">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4"></circle><path d="M10 10l3.5 3.5"></path></svg>
+      <input value="{{q}}" onChange="{{setQ}}" onKeyDown="{{onKey}}" placeholder="filter project, branch, path" style="flex: 1 1 0; min-width: 0; height: 26px; border: 0; background: transparent; color: var(--fg); font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;">
+    </div>
+    <div style="flex: 1 1 0;"></div>
+    <div style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: {{progressColor}};">{{progress}}</div>
+  </div>
+
+  <div style="flex: 1 1 0; min-height: 0; display: flex;">
+
+    <div style="width: 260px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line2); background: var(--bg); overflow: auto; scrollbar-gutter: stable; padding: 6px 0;">
+      <sc-for list="{{nodes}}" as="n" hint-placeholder-count="12">
+        <div class="node" data-sel="{{n.sel}}" onClick="{{n.pick}}" title="{{n.tip}}" style="display: flex; align-items: center; gap: 6px; height: 26px; padding-left: {{n.pad}}px; padding-right: 10px; cursor: default; font-size: 12px; user-select: none;">
+          <svg onClick="{{n.toggle}}" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display: {{n.chevD}}; flex: none; color: var(--muted); transform: rotate({{n.chevRot}}deg); cursor: pointer;"><path d="M6 4l4 4-4 4"></path></svg>
+          <span style="display: {{n.sansD}}; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: {{n.weight}}; color: {{n.color}};">{{n.label}}</span>
+          <span style="display: {{n.monoD}}; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; color: {{n.color}};">{{n.label}}</span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display: {{n.errD}}; flex: none; color: var(--c-err);"><path d="M8 2.5 14 13H2z"></path><path d="M8 6.5v3M8 11.2v.3"></path></svg>
+          <span style="display: {{n.scanD}}; flex: none; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; color: var(--c-ahead);">…</span>
+          <span style="display: {{n.dotD}}; flex: none; width: 6px; height: 6px; border-radius: 3px; background: {{n.dot}};"></span>
+          <span style="display: {{n.c1d}}; flex: none; min-width: 14px; text-align: right; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-dirty);">{{n.c1}}</span>
+          <span style="display: {{n.c2d}}; flex: none; min-width: 14px; text-align: right; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-ahead);">{{n.c2}}</span>
+          <span style="display: {{n.c3d}}; flex: none; min-width: 14px; text-align: right; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-merged);">{{n.c3}}</span>
+          <span style="display: {{n.c4d}}; flex: none; min-width: 14px; text-align: right; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--c-stale);">{{n.c4}}</span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel);">
+
+      <sc-if value="{{isTable}}" hint-placeholder-val="{{false}}">
+        <sc-if value="{{isRoot}}" hint-placeholder-val="{{false}}">
+          <div style="height: 36px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--line);">
+            <button onClick="{{chip.dirty.toggle}}" title="Worktrees with staged, modified or untracked files" style="height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid {{chip.dirty.border}}; border-radius: 12px; background: {{chip.dirty.bg}}; color: {{chip.dirty.fg}}; font-family: inherit; font-size: 12px; cursor: pointer;"><span>dirty</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; opacity: 0.7;">{{chip.dirty.count}}</span></button>
+            <button onClick="{{chip.unpushed.toggle}}" title="Commits ahead of upstream, or no upstream at all" style="height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid {{chip.unpushed.border}}; border-radius: 12px; background: {{chip.unpushed.bg}}; color: {{chip.unpushed.fg}}; font-family: inherit; font-size: 12px; cursor: pointer;"><span>unpushed</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; opacity: 0.7;">{{chip.unpushed.count}}</span></button>
+            <button onClick="{{chip.merged.toggle}}" title="Branch is an ancestor of the main ref (squash merges are not detected)" style="height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid {{chip.merged.border}}; border-radius: 12px; background: {{chip.merged.bg}}; color: {{chip.merged.fg}}; font-family: inherit; font-size: 12px; cursor: pointer;"><span>merged</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; opacity: 0.7;">{{chip.merged.count}}</span></button>
+            <button onClick="{{chip.stale.toggle}}" title="Last commit older than the stale threshold" style="height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid {{chip.stale.border}}; border-radius: 12px; background: {{chip.stale.bg}}; color: {{chip.stale.fg}}; font-family: inherit; font-size: 12px; cursor: pointer;"><span>{{chip.stale.label}}</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; opacity: 0.7;">{{chip.stale.count}}</span></button>
+            <div style="flex: 1 1 0;"></div>
+            <div style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);">{{totals}}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{isProject}}" hint-placeholder-val="{{false}}">
+          <div style="height: 56px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-bottom: 1px solid var(--line);">
+            <span style="font-size: 14px; font-weight: 600;">{{proj.name}}</span>
+            <span style="flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);">{{proj.path}}</span>
+            <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;"><span style="color: var(--muted);">main ref </span>{{proj.main}}</span>
+            <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;"><span style="color: var(--muted);">scan </span><span style="color: {{proj.scanColor}};">{{proj.scan}}</span></span>
+            <button class="btn" onClick="{{proj.remove}}" title="Removes this project from Dryad's list only; the repository is not touched" style="height: 24px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--fg); font-family: inherit; font-size: 12px; cursor: pointer;">Remove from list</button>
+          </div>
+          <div style="display: {{proj.errD}}; flex: none; padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--c-err);">{{proj.err}}</div>
+        </sc-if>
+
+        <div style="flex: 1 1 0; min-height: 0; overflow: auto; scrollbar-gutter: stable;">
+        <div style="position: sticky; top: 0; z-index: 1; height: 26px; display: flex; align-items: center; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line2); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); user-select: none;">
+          <div style="width: 20px; flex: none;"></div>
+          <div class="hdr" onClick="{{hdr.repo.click}}" style="display: {{repoColD}}; width: 150px; flex: none; align-items: center; gap: 4px; color: {{hdr.repo.color}}; cursor: pointer;"><span>Project</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.repo.op}}; transform: rotate({{hdr.repo.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+          <div class="hdr" onClick="{{hdr.worktree.click}}" style="flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 4px; color: {{hdr.worktree.color}}; cursor: pointer;"><span>Worktree</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.worktree.op}}; transform: rotate({{hdr.worktree.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+          <div class="hdr" onClick="{{hdr.changes.click}}" title="+ staged   ~ modified   ? untracked" style="width: 110px; flex: none; display: flex; align-items: center; gap: 4px; color: {{hdr.changes.color}}; cursor: pointer;"><span>Changes</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.changes.op}}; transform: rotate({{hdr.changes.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+          <div class="hdr" onClick="{{hdr.upstream.click}}" title="ahead / behind the tracking branch" style="width: 120px; flex: none; display: flex; align-items: center; gap: 4px; color: {{hdr.upstream.color}}; cursor: pointer;"><span>Upstream</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.upstream.op}}; transform: rotate({{hdr.upstream.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+          <div class="hdr" onClick="{{hdr.merged.click}}" style="width: 80px; flex: none; display: flex; align-items: center; gap: 4px; color: {{hdr.merged.color}}; cursor: pointer;"><span>Merged</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.merged.op}}; transform: rotate({{hdr.merged.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+          <div class="hdr" onClick="{{hdr.last.click}}" style="width: 130px; flex: none; display: flex; align-items: center; gap: 4px; color: {{hdr.last.color}}; cursor: pointer;"><span>Last commit</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: {{hdr.last.op}}; transform: rotate({{hdr.last.rot}}deg);"><path d="M4 6l4 4 4-4"></path></svg></div>
+        </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="18">
+            <div class="row" data-sel="{{r.sel}}" title="{{r.tip}}" onClick="{{r.pick}}" style="display: flex; align-items: center; height: 28px; padding: 0 12px; border-bottom: 1px solid var(--line); font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; font-variant-numeric: tabular-nums; cursor: default;">
+              <div style="width: 20px; flex: none; display: flex; align-items: center; color: var(--c-err);"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="visibility: {{r.errVis}};"><path d="M8 2.5 14 13H2z"></path><path d="M8 6.5v3M8 11.2v.3"></path></svg></div>
+              <div style="display: {{r.repoD}}; width: 150px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{r.repoColor}};">{{r.repoName}}</div>
+              <div style="flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{r.wtColor}};">{{r.wtLabel}}</span>
+                <span style="display: {{r.b1d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-size: 10px; line-height: 1.3; color: var(--muted); white-space: nowrap;">{{r.b1}}</span>
+                <span style="display: {{r.b2d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-size: 10px; line-height: 1.3; color: var(--muted); white-space: nowrap;">{{r.b2}}</span>
+                <span style="display: {{r.b3d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-size: 10px; line-height: 1.3; color: var(--muted); white-space: nowrap;">{{r.b3}}</span>
+              </div>
+              <div style="width: 110px; flex: none; color: {{r.changesColor}};">{{r.changes}}</div>
+              <div style="width: 120px; flex: none; color: {{r.upColor}};">{{r.up}}</div>
+              <div style="width: 80px; flex: none; color: {{r.mergedColor}};">{{r.merged}}</div>
+              <div title="{{r.lastAbs}}" style="width: 130px; flex: none; color: {{r.lastColor}};">{{r.last}}</div>
+            </div>
+          </sc-for>
+          <sc-if value="{{noRows}}" hint-placeholder-val="{{false}}">
+            <div style="padding: 24px 12px; color: var(--muted);">{{noRowsText}}</div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isWorktree}}" hint-placeholder-val="{{true}}">
+        <div style="height: 56px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line);">
+          <span style="font-size: 14px; color: var(--muted);">{{wt.repoName}}</span>
+          <span style="font-size: 14px; color: var(--faint);">/</span>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 14px; font-weight: 500; color: {{wt.branchColor}};">{{wt.branch}}</span>
+          <span style="display: {{wt.b1d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: var(--muted);">{{wt.b1}}</span>
+          <span style="display: {{wt.b2d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: var(--muted);">{{wt.b2}}</span>
+          <span style="display: {{wt.b3d}}; padding: 1px 5px; border: 1px solid var(--line2); border-radius: 3px; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: var(--muted);">{{wt.b3}}</span>
+          <span style="flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);">{{wt.path}}</span>
+          <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;"><span style="color: var(--muted);">HEAD </span>{{wt.head}}</span>
+        </div>
+        <div style="height: 30px; flex: none; display: flex; align-items: center; gap: 22px; padding: 0 14px; border-bottom: 1px solid var(--line); font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; font-variant-numeric: tabular-nums;">
+          <span><span style="color: var(--muted);">changes </span><span style="color: {{wt.changesColor}};">{{wt.changes}}</span></span>
+          <span><span style="color: var(--muted);">upstream </span><span style="color: {{wt.upColor}};">{{wt.up}}</span></span>
+          <span><span style="color: var(--muted);">merged </span><span style="color: {{wt.mergedColor}};">{{wt.merged}}</span></span>
+          <span title="{{wt.lastAbs}}"><span style="color: var(--muted);">last commit </span><span style="color: {{wt.lastColor}};">{{wt.last}}</span></span>
+          <span title="{{wt.extra}}" style="display: {{wt.extraD}}; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{wt.extraColor}};">{{wt.extra}}</span>
+        </div>
+        <div style="height: 34px; flex: none; display: flex; align-items: stretch; gap: 10px; padding: 0 8px; border-bottom: 1px solid var(--line2);">
+          <div onClick="{{tab.changes.pick}}" style="display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 2px solid {{tab.changes.border}}; color: {{tab.changes.color}}; font-weight: 500; cursor: pointer; user-select: none;"><span>Working tree</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted);">{{tab.changes.count}}</span></div>
+          <div onClick="{{tab.branch.pick}}" style="display: flex; align-items: center; gap: 6px; padding: 0 8px; border-bottom: 2px solid {{tab.branch.border}}; color: {{tab.branch.color}}; font-weight: 500; cursor: pointer; user-select: none;"><span>{{tab.branch.label}}</span><span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted);">{{tab.branch.count}}</span></div>
+          <div style="flex: 1 1 0;"></div>
+          <div style="display: flex; align-items: center; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted);">{{tabSummary}}</div>
+        </div>
+        <div style="flex: 1 1 0; min-height: 0; display: flex;">
+          <div style="width: 280px; flex: none; overflow: auto; scrollbar-gutter: stable; border-right: 1px solid var(--line); background: var(--bg); padding: 4px 0;">
+            <sc-for list="{{files}}" as="f" hint-placeholder-count="8">
+              <div class="file" data-sel="{{f.sel}}" onClick="{{f.pick}}" title="{{f.tip}}" style="display: flex; align-items: center; gap: 8px; height: 24px; margin-top: {{f.mt}}px; padding-left: 10px; padding-right: 10px; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: {{f.size}}px; letter-spacing: {{f.ls}}em; color: {{f.fg}}; cursor: default; user-select: none;">
+                <span style="display: {{f.kindD}}; width: 12px; flex: none; text-align: center; color: {{f.kindColor}};">{{f.kind}}</span>
+                <span style="flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted);">{{f.dir}}</span>
+                <span style="flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: -8px;">{{f.base}}</span>
+                <span style="display: {{f.countsD}}; flex: none; font-size: 11px;"><span style="color: var(--add-fg);">{{f.add}}</span> <span style="color: var(--del-fg);">{{f.del}}</span></span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;">
+            <div style="display: {{noticeD}}; flex: 1 1 0; align-items: center; justify-content: center; color: var(--muted);">{{notice}}</div>
+            <div style="display: {{diffD}}; flex: 1 1 0; min-height: 0; flex-direction: column;">
+              <div style="height: 28px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--line); font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;">
+                <span style="flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{diffHead.path}}</span>
+                <span style="color: var(--muted);">{{diffHead.meta}}</span>
+                <span style="color: var(--add-fg);">{{diffHead.add}}</span>
+                <span style="color: var(--del-fg);">{{diffHead.del}}</span>
+              </div>
+              <div style="flex: 1 1 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 20px; font-variant-numeric: tabular-nums;">
+                <sc-for list="{{lines}}" as="l" hint-placeholder-count="20">
+                  <div style="display: flex; width: max-content; min-width: 100%; background: {{l.bg}}; color: {{l.fg}}; border-top: {{l.bt}};">
+                    <span style="width: 44px; flex: none; text-align: right; padding-right: 6px; color: var(--faint); user-select: none;">{{l.n1}}</span>
+                    <span style="width: 44px; flex: none; text-align: right; padding-right: 6px; color: var(--faint); user-select: none;">{{l.n2}}</span>
+                    <span style="width: 16px; flex: none; text-align: center; color: {{l.signColor}}; user-select: none;">{{l.sign}}</span>
+                    <span style="flex: 1 1 0; min-width: 0; white-space: pre; padding-right: 12px;">{{l.text}}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Appearance"},"staleDays":{"editor":"int","default":30,"min":1,"max":365,"unit":"d","section":"Behavior"},"initialView":{"editor":"enum","options":["worktree","project","all"],"default":"worktree","section":"Behavior"},"$preview":{"width":1280,"height":800}}'>
+const H = 3600;
+const D = 86400;
+const NOW = Date.UTC(2026, 8, 9, 10, 0, 0);
+const SCAN_MS = 4000;
+
+// Sample data shaped like the real machine: projects under ~/basebit/project and ~/programming/project,
+// each worktree under <repo>/.worktrees/<branch>. Values are illustrative.
+// Worktrees flagged `late` have their status arrive in the second scan phase (rendered as pending while scanning).
+const REPOS = [
+  { id: 'nova', name: 'nova', path: '/Users/angus/basebit/project/nova/nova', main: 'origin/master', ext: 'go', wts: [
+    { branch: 'master', primary: true, head: '338c69d6', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/master', a: 0, b: 0 }, merged: null, age: 2 * D },
+    { branch: 'iodc-endpoint-url', head: '4da51ed9', st: { s: 2, u: 1, n: 0 }, up: { name: 'origin/iodc-endpoint-url', a: 3, b: 0 }, merged: false, age: 5 * H },
+    { branch: 'mcp-claude-code-compat', head: '87f26fe1', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/mcp-claude-code-compat', a: 0, b: 2 }, merged: true, age: 12 * D },
+    { branch: 'simplify-merge-gate', head: 'c3f3fd74', st: { s: 0, u: 0, n: 4 }, up: { none: true }, merged: false, age: 41 * D },
+  ] },
+  { id: 'minio-gateway', name: 'minio-gateway', path: '/Users/angus/basebit/project/xfs/minio-gateway', main: 'origin/main', ext: 'go', wts: [
+    { branch: 'main', primary: true, head: 'a1c2e3f4', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/main', a: 0, b: 0 }, merged: null, age: 9 * D },
+    { branch: 'fix-range-headers', head: '0b7d9e11', late: true, st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/fix-range-headers', a: 0, b: 0 }, merged: true, age: 190 * D },
+    { branch: 's3-select', head: '5e6f7a8b', late: true, st: { s: 0, u: 1, n: 0 }, up: { name: 'origin/s3-select', a: 0, b: 7 }, merged: false, age: 233 * D },
+    { branch: 'bump-deps', head: '9c0d1e2f', st: { s: 0, u: 3, n: 0 }, up: { name: 'origin/bump-deps', a: 1, b: 4 }, merged: false, age: 61 * D },
+  ] },
+  { id: 'janus', name: 'janus', path: '/Users/angus/programming/project/janus', main: 'origin/main', ext: 'ts', wts: [
+    { branch: 'main', primary: true, head: '77aa19c0', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/main', a: 0, b: 0 }, merged: null, age: 7 * D },
+    { branch: 'feat/ui', head: 'd4e5f6a7', locked: 'in use by CI runner', st: { s: 0, u: 0, n: 0 }, up: { gone: true, name: 'origin/feat/ui' }, merged: false, age: 7 * D },
+    { branch: 'hotfix-401', head: 'b8c9d0e1', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/hotfix-401', a: 0, b: 0 }, merged: true, age: 120 * D },
+  ] },
+  { id: 'grasp', name: 'grasp', path: '/Users/angus/programming/project/grasp', main: 'origin/master', ext: 'rs', wts: [
+    { branch: 'master', primary: true, head: '2c3d4e5f', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/master', a: 0, b: 0 }, merged: null, age: 1 * D },
+    { branch: 'parser-v2', head: '6a7b8c9d', st: { s: 5, u: 2, n: 1 }, up: { name: 'origin/parser-v2', a: 8, b: 0 }, merged: false, age: 1 * D },
+    { branch: null, head: '9f3a1c2e', st: { s: 0, u: 0, n: 0 }, up: { none: true }, merged: false, age: 88 * D },
+  ] },
+  { id: 'dockerfile', name: 'dockerfile', path: '/Users/angus/basebit/project/dockerfile', main: 'origin/master', ext: 'Dockerfile', wts: [
+    { branch: 'master', primary: true, head: 'e0f1a2b3', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/master', a: 0, b: 0 }, merged: null, age: 45 * D },
+    { branch: 'ci-arm64', head: 'c4d5e6f7', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/ci-arm64', a: 0, b: 0 }, merged: true, age: 45 * D },
+    { branch: 'go1.24', head: 'a8b9c0d1', prunable: 'gitdir points to a missing directory', err: 'worktree directory is missing', st: null, up: { name: 'origin/go1.24', a: 1, b: 0 }, merged: false, age: 30 * D },
+  ] },
+  { id: 'cova', name: 'cova', path: '/Users/angus/basebit/project/cova/cova', main: null, ext: 'go', failed: true, err: 'not a git repository: /Users/angus/basebit/project/cova/cova (moved or deleted?)', wts: [] },
+  { id: 'hmt', name: 'hmt', path: '/Users/angus/programming/project/hmt', main: 'origin/master', ext: 'go', wts: [
+    { branch: 'master', primary: true, head: '1a2b3c4d', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/master', a: 0, b: 0 }, merged: null, age: 3 * D },
+    { branch: 'async-io', head: '5e6f7a8b', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/async-io', a: 0, b: 0 }, merged: true, age: 77 * D },
+    { branch: 'wip-cli', head: '9c0d1e2f', st: { s: 0, u: 0, n: 9 }, up: { none: true }, merged: false, age: 3 * D },
+  ] },
+  { id: 'xobj-proxy', name: 'xobj-proxy', path: '/Users/angus/basebit/project/nova/xobj-proxy', main: 'origin/master', ext: 'go', wts: [
+    { branch: 'master', primary: true, head: 'f3e2d1c0', st: { s: 0, u: 0, n: 0 }, up: { name: 'origin/master', a: 0, b: 0 }, merged: null, age: 19 * D },
+    { branch: 'pagination-fix', head: 'b7a6c5d4', st: { s: 1, u: 0, n: 0 }, up: { name: 'origin/pagination-fix', a: 2, b: 0 }, merged: false, age: 19 * D },
+  ] },
+];
+
+// Hand-written diffs for the two worktrees the prototype opens on; every other worktree gets a synthesized diff.
+// A file: { path, kind: M|A|D|?, staged, add, del, hunks: [{ h: '@@ -a,b +c,d @@', l: ['+line', '-line', ' line'] }] }
+const DIFFS = {
+  'grasp/parser-v2': {
+    changes: [
+      { path: 'src/parser/expr.rs', kind: 'M', staged: true, add: 41, del: 12, hunks: [
+        { h: '@@ -18,11 +18,17 @@ impl Parser {', l: [
+          '     fn parse_expr(&mut self) -> Result<Expr> {',
+          '-        let lhs = self.parse_unary()?;',
+          '-        self.parse_binary_rhs(0, lhs)',
+          '+        self.parse_expr_bp(0)',
+          '+    }',
+          '+',
+          '+    /// Pratt parser: `min_bp` is the minimum binding power the caller accepts.',
+          '+    fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr> {',
+          '+        let mut lhs = self.parse_unary()?;',
+          '+        while let Some(op) = self.peek_binary_op() {',
+          '+            let (l_bp, r_bp) = precedence::infix_bp(op);',
+          '+            if l_bp < min_bp { break; }',
+          '+            self.bump();',
+          '+            let rhs = self.parse_expr_bp(r_bp)?;',
+          '+            lhs = Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };',
+          '+        }',
+          '+        Ok(lhs)',
+          '     }',
+        ] },
+        { h: '@@ -64,9 +70,6 @@ impl Parser {', l: [
+          '     fn parse_unary(&mut self) -> Result<Expr> {',
+          '-        // TODO: precedence climbing is wrong for right-assoc ops',
+          '-        // see issue #41',
+          '-',
+          '         match self.peek() {',
+          '             Token::Minus => { self.bump(); Ok(Expr::Neg(Box::new(self.parse_unary()?))) }',
+          '             Token::Bang => { self.bump(); Ok(Expr::Not(Box::new(self.parse_unary()?))) }',
+        ] },
+      ] },
+      { path: 'src/parser/mod.rs', kind: 'M', staged: true, add: 9, del: 3, hunks: [
+        { h: '@@ -1,8 +1,14 @@', l: [
+          ' mod expr;',
+          ' mod lexer;',
+          '+mod precedence;',
+          ' mod stmt;',
+          ' ',
+          '-pub use expr::parse_expr;',
+          '-pub use stmt::parse_stmt;',
+          '+pub use expr::Parser;',
+          '+pub use precedence::{infix_bp, prefix_bp};',
+          '+',
+          '+/// Parse a full program from source.',
+          '+pub fn parse(src: &str) -> Result<Program> {',
+          '+    Parser::new(src).parse_program()',
+          '+}',
+        ] },
+      ] },
+      { path: 'src/parser/precedence.rs', kind: 'A', staged: true, add: 88, del: 0, hunks: [
+        { h: '@@ -0,0 +1,22 @@', l: [
+          '+//! Binding powers for the Pratt parser.',
+          '+//!',
+          '+//! Higher binds tighter. Each infix operator has a left and a right power;',
+          '+//! right-associative operators use `(n, n-1)`, left-associative `(n, n+1)`.',
+          '+',
+          '+use crate::token::Op;',
+          '+',
+          '+pub fn infix_bp(op: Op) -> (u8, u8) {',
+          '+    match op {',
+          '+        Op::Or => (1, 2),',
+          '+        Op::And => (3, 4),',
+          '+        Op::Eq | Op::Ne => (5, 6),',
+          '+        Op::Lt | Op::Le | Op::Gt | Op::Ge => (7, 8),',
+          '+        Op::Add | Op::Sub => (9, 10),',
+          '+        Op::Mul | Op::Div | Op::Rem => (11, 12),',
+          '+        Op::Pow => (14, 13),',
+          '+    }',
+          '+}',
+          '+',
+          '+pub fn prefix_bp(op: Op) -> u8 {',
+          '+    match op { Op::Sub | Op::Not => 15, _ => unreachable!() }',
+          '+}',
+        ] },
+      ] },
+      { path: 'src/lexer.rs', kind: 'M', staged: true, add: 6, del: 1, hunks: [
+        { h: '@@ -102,7 +102,12 @@ impl Lexer {', l: [
+          "             '*' => Token::Op(Op::Mul),",
+          "             '/' => Token::Op(Op::Div),",
+          "             '%' => Token::Op(Op::Rem),",
+          "-            '^' => Token::Op(Op::Pow),",
+          "+            '^' => {",
+          "+                // `^` was bitwise xor in v1; parser-v2 repurposes it as power.",
+          "+                self.warn_once(\"`^` now means exponentiation\");",
+          "+                Token::Op(Op::Pow)",
+          "+            }",
+          "+            '&' => Token::Op(Op::And),",
+          "             c => return Err(LexError::Unexpected(c, self.pos)),",
+        ] },
+      ] },
+      { path: 'tests/parser_expr.rs', kind: 'A', staged: true, add: 57, del: 0, hunks: [
+        { h: '@@ -0,0 +1,16 @@', l: [
+          '+use grasp::parser::parse;',
+          '+',
+          '+#[test]',
+          '+fn pow_is_right_associative() {',
+          '+    assert_eq!(parse("2 ^ 3 ^ 2").unwrap().to_string(), "(2 ^ (3 ^ 2))");',
+          '+}',
+          '+',
+          '+#[test]',
+          '+fn mul_binds_tighter_than_add() {',
+          '+    assert_eq!(parse("1 + 2 * 3").unwrap().to_string(), "(1 + (2 * 3))");',
+          '+}',
+          '+',
+          '+#[test]',
+          '+fn unary_minus_binds_tighter_than_pow() {',
+          '+    assert_eq!(parse("-2 ^ 2").unwrap().to_string(), "((-2) ^ 2)");',
+          '+}',
+        ] },
+      ] },
+      { path: 'Cargo.toml', kind: 'M', staged: false, add: 1, del: 1, hunks: [
+        { h: '@@ -1,6 +1,6 @@', l: [
+          ' [package]',
+          ' name = "grasp"',
+          '-version = "0.4.2"',
+          '+version = "0.5.0-dev"',
+          ' edition = "2024"',
+          ' ',
+        ] },
+      ] },
+      { path: 'README.md', kind: 'M', staged: false, add: 3, del: 0, hunks: [
+        { h: '@@ -40,3 +40,6 @@ grasp eval "1 + 2 * 3"', l: [
+          ' ## Operators',
+          ' ',
+          ' Standard arithmetic and comparison operators are supported.',
+          '+',
+          '+`^` is exponentiation and binds to the right: `2 ^ 3 ^ 2` is `2 ^ 9`.',
+          '+Unary minus binds tighter than `^`, so `-2 ^ 2` is `4`.',
+        ] },
+      ] },
+      { path: 'notes/precedence-table.md', kind: '?', staged: false, add: 0, del: 0, hunks: [] },
+    ],
+    branch: [
+      { path: 'src/parser/expr.rs', kind: 'M', add: 96, del: 40, hunks: [
+        { h: '@@ -1,6 +1,8 @@', l: [
+          ' use crate::ast::Expr;',
+          '+use crate::parser::precedence;',
+          ' use crate::token::{Op, Token};',
+          ' ',
+          '+/// Recursive-descent front end with a Pratt core for expressions.',
+          ' pub struct Parser<\'a> {',
+          '     toks: Vec<Token>,',
+          '     pos: usize,',
+        ] },
+      ] },
+      { path: 'src/parser/mod.rs', kind: 'M', add: 12, del: 4, hunks: [ { h: '@@ -1,4 +1,6 @@', l: [ ' mod expr;', ' mod lexer;', '+mod precedence;', ' mod stmt;', '+', '+pub use expr::Parser;' ] } ] },
+      { path: 'src/parser/precedence.rs', kind: 'A', add: 88, del: 0, hunks: [ { h: '@@ -0,0 +1,3 @@', l: [ '+//! Binding powers for the Pratt parser.', '+', '+use crate::token::Op;' ] } ] },
+      { path: 'src/lexer.rs', kind: 'M', add: 14, del: 3, hunks: [ { h: '@@ -98,4 +98,6 @@ impl Lexer {', l: [ "             '+' => Token::Op(Op::Add),", "             '-' => Token::Op(Op::Sub),", "+            '^' => Token::Op(Op::Pow),", "+            '&' => Token::Op(Op::And),", "             c => return Err(LexError::Unexpected(c, self.pos))," ] } ] },
+      { path: 'src/ast.rs', kind: 'M', add: 5, del: 0, hunks: [ { h: '@@ -12,3 +12,8 @@ pub enum Expr {', l: [ '     Neg(Box<Expr>),', '     Not(Box<Expr>),', '     Binary { op: Op, lhs: Box<Expr>, rhs: Box<Expr> },', '+    /// Parenthesised group, kept for round-trip printing.', '+    Group(Box<Expr>),' ] } ] },
+      { path: 'tests/parser_expr.rs', kind: 'A', add: 57, del: 0, hunks: [ { h: '@@ -0,0 +1,3 @@', l: [ '+use grasp::parser::parse;', '+', '+#[test]' ] } ] },
+      { path: 'tests/parser_stmt.rs', kind: 'M', add: 9, del: 2, hunks: [ { h: '@@ -3,5 +3,5 @@', l: [ ' #[test]', ' fn let_binding() {', '-    let prog = parse_stmt("let x = 1;").unwrap();', '+    let prog = parse("let x = 1;").unwrap();', '     assert_eq!(prog.stmts.len(), 1);' ] } ] },
+      { path: 'CHANGELOG.md', kind: 'M', add: 6, del: 0, hunks: [ { h: '@@ -1,3 +1,9 @@', l: [ ' # Changelog', ' ', '+## 0.5.0 (unreleased)', '+', '+- Expression parsing is now a Pratt parser; `^` is right-associative.', '+- `&` is accepted as a synonym for `and`.', '+', ' ## 0.4.2' ] } ] },
+    ],
+  },
+  'nova/iodc-endpoint-url': {
+    changes: [
+      { path: 'internal/network/endpoint.go', kind: 'M', staged: true, add: 23, del: 9, hunks: [
+        { h: '@@ -14,12 +14,26 @@ import (', l: [
+          ' // Endpoint is the resolved IoDC broker address.',
+          ' type Endpoint struct {',
+          '-\tHost string',
+          '-\tPort int',
+          '+\tURL *url.URL',
+          ' }',
+          ' ',
+          '-// Addr returns host:port for dialing.',
+          '-func (e Endpoint) Addr() string { return net.JoinHostPort(e.Host, strconv.Itoa(e.Port)) }',
+          '+// ParseEndpoint accepts an https URL and refuses anything else: the trust',
+          '+// decision is delegated to the system roots, so plaintext is never an option.',
+          '+func ParseEndpoint(raw string) (Endpoint, error) {',
+          '+\tu, err := url.Parse(raw)',
+          '+\tif err != nil {',
+          '+\t\treturn Endpoint{}, fmt.Errorf("endpoint url: %w", err)',
+          '+\t}',
+          '+\tif u.Scheme != "https" {',
+          '+\t\treturn Endpoint{}, fmt.Errorf("endpoint url: scheme %q not allowed", u.Scheme)',
+          '+\t}',
+          '+\treturn Endpoint{URL: u}, nil',
+          '+}',
+          '+',
+          '+// Authority returns host[:port] for dialing.',
+          '+func (e Endpoint) Authority() string { return e.URL.Host }',
+        ] },
+      ] },
+      { path: 'internal/config/config.go', kind: 'M', staged: true, add: 4, del: 6, hunks: [
+        { h: '@@ -41,9 +41,7 @@ type IoDC struct {', l: [
+          ' type IoDC struct {',
+          '-\tBrokerHost string `yaml:"broker_host"`',
+          '-\tBrokerPort int    `yaml:"broker_port"`',
+          '-\tInsecure   bool   `yaml:"insecure"`',
+          '+\tBrokerURL string `yaml:"broker_url"`',
+          ' }',
+        ] },
+      ] },
+      { path: 'SPEC/connector-module.md', kind: 'M', staged: false, add: 7, del: 3, hunks: [
+        { h: '@@ -88,7 +88,11 @@', l: [
+          ' ### IoDC 地址',
+          ' ',
+          '-连接器以 `broker_host` 与 `broker_port` 指定 IoDC Broker 的地址。',
+          '+连接器以 `broker_url` 指定 IoDC Broker 的端点 URL，只接受 `https`。',
+          '+',
+          '+信任只使用系统根证书；集群内 TLS 属基础设施层，不在连接器配置中出现。',
+          '+',
+          '+旧的 `broker_host` / `broker_port` / `insecure` 三个键已删除，出现即报错。',
+        ] },
+      ] },
+    ],
+    branch: [
+      { path: 'internal/network/endpoint.go', kind: 'M', add: 31, del: 12, hunks: [ { h: '@@ -14,5 +14,5 @@', l: [ ' // Endpoint is the resolved IoDC broker address.', ' type Endpoint struct {', '-\tHost string', '+\tURL *url.URL', ' }' ] } ] },
+      { path: 'internal/network/client.go', kind: 'M', add: 18, del: 22, hunks: [ { h: '@@ -30,6 +30,5 @@ func NewClient(', l: [ ' \tcreds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})', '-\tif cfg.Insecure {', '-\t\tcreds = insecure.NewCredentials()', '-\t}', '+\t// System roots only; there is no insecure escape hatch.', ' \tconn, err := grpc.NewClient(ep.Authority(), grpc.WithTransportCredentials(creds))' ] } ] },
+      { path: 'internal/config/config.go', kind: 'M', add: 4, del: 6, hunks: [ { h: '@@ -41,4 +41,2 @@', l: [ ' type IoDC struct {', '-\tBrokerHost string `yaml:"broker_host"`', '-\tBrokerPort int    `yaml:"broker_port"`', '+\tBrokerURL string `yaml:"broker_url"`' ] } ] },
+      { path: 'internal/config/config_test.go', kind: 'M', add: 26, del: 4, hunks: [ { h: '@@ -55,3 +55,9 @@ func TestLoad(t *testing.T) {', l: [ ' \tt.Run("rejects removed keys", func(t *testing.T) {', '+\t\t_, err := Load(strings.NewReader("iodc:\\n  broker_host: x\\n"))', '+\t\tif err == nil || !strings.Contains(err.Error(), "broker_host") {', '+\t\t\tt.Fatalf("want removed-key error, got %v", err)', '+\t\t}', '+\t})' ] } ] },
+      { path: 'SPEC/connector-module.md', kind: 'M', add: 7, del: 3, hunks: [ { h: '@@ -88,3 +88,3 @@', l: [ ' ### IoDC 地址', ' ', '-连接器以 `broker_host` 与 `broker_port` 指定 IoDC Broker 的地址。', '+连接器以 `broker_url` 指定 IoDC Broker 的端点 URL，只接受 `https`。' ] } ] },
+    ],
+  },
+};
+
+const DEFAULT_DIR = { repo: 1, worktree: 1, changes: -1, upstream: -1, merged: 1, last: 1 };
+const KIND_COLOR = { M: 'var(--c-dirty)', A: 'var(--add-fg)', D: 'var(--del-fg)', '?': 'var(--muted)' };
+
+function rel(age) {
+  if (age < H) return Math.max(1, Math.round(age / 60)) + 'm ago';
+  if (age < D) return Math.round(age / H) + 'h ago';
+  return Math.round(age / D) + 'd ago';
+}
+function abs(age) {
+  return new Date(NOW - age * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+}
+function wtPath(repo, wt) {
+  return wt.primary ? repo.path : repo.path + '/.worktrees/' + (wt.branch || wt.head);
+}
+function cmp(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i];
+    if (x === y) continue;
+    if (typeof x === 'number' && typeof y === 'number') return x - y;
+    return String(x).localeCompare(String(y));
+  }
+  return 0;
+}
+function slug(s) { return (s || 'detached').replace(/[^a-z0-9]+/gi, '_').toLowerCase(); }
+
+// Synthesized diff for worktrees without a hand-written one: one plausible file per counted change.
+function synthFile(repo, wt, i, kind, staged) {
+  const base = slug(wt.branch);
+  const path = kind === '?' ? 'notes/' + base + '.md' : 'src/' + base + '/' + ['handler', 'service', 'model', 'config', 'util', 'cli', 'index', 'main', 'store'][i % 9] + '_' + i + '.' + repo.ext;
+  if (kind === '?') return { path, kind, staged: false, add: 0, del: 0, hunks: [] };
+  const add = 3 + ((i * 7) % 11), del = kind === 'A' ? 0 : 1 + ((i * 3) % 4);
+  const l = [
+    ' // ' + path,
+    kind === 'A' ? '+' : '-' + 'func legacy' + i + '() {}',
+    '+func ' + base + '_' + i + '() {',
+    '+\t// changed on branch ' + (wt.branch || 'detached HEAD'),
+    '+}',
+    ' ',
+  ];
+  return { path, kind, staged, add, del, hunks: [{ h: kind === 'A' ? '@@ -0,0 +1,' + (l.length - 1) + ' @@' : '@@ -' + (10 + i) + ',4 +' + (10 + i) + ',6 @@', l }] };
+}
+function synthChanges(repo, wt) {
+  if (!wt.st) return [];
+  const out = [];
+  let i = 0;
+  for (let k = 0; k < wt.st.s; k++) out.push(synthFile(repo, wt, i++, k === 0 && wt.st.s > 1 ? 'A' : 'M', true));
+  for (let k = 0; k < wt.st.u; k++) out.push(synthFile(repo, wt, i++, 'M', false));
+  for (let k = 0; k < wt.st.n; k++) out.push(synthFile(repo, wt, i++, '?', false));
+  return out;
+}
+function synthBranch(repo, wt) {
+  const n = wt.up && wt.up.a ? Math.min(wt.up.a, 6) + 1 : 3;
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(synthFile(repo, wt, i, i === 0 ? 'A' : 'M', true));
+  return out;
+}
+function diffFor(id, repo, wt) {
+  const d = DIFFS[id];
+  return {
+    changes: d ? d.changes : synthChanges(repo, wt),
+    branch: d ? d.branch : synthBranch(repo, wt),
+  };
+}
+// Expand a file's hunks into unified-diff rows with old/new line numbers.
+function diffLines(file) {
+  const out = [];
+  for (const hk of file.hunks) {
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(hk.h);
+    let n1 = m ? Number(m[1]) : 1, n2 = m ? Number(m[2]) : 1;
+    // Background carries the state; line text stays in the normal colour and only the sign column is tinted.
+    out.push({ n1: '', n2: '', sign: '', text: hk.h, bg: 'var(--hunk-bg)', fg: 'var(--muted)', signColor: 'var(--muted)', bt: '1px solid var(--line)' });
+    for (const raw of hk.l) {
+      const sign = raw[0] === '+' || raw[0] === '-' ? raw[0] : ' ';
+      const text = raw.slice(1).replace(/\t/g, '    ');
+      if (sign === '+') { out.push({ n1: '', n2: String(n2++), sign: '+', text, bg: 'var(--add-bg)', fg: 'var(--fg)', signColor: 'var(--add-fg)', bt: 'none' }); }
+      else if (sign === '-') { out.push({ n1: String(n1++), n2: '', sign: '-', text, bg: 'var(--del-bg)', fg: 'var(--fg)', signColor: 'var(--del-fg)', bt: 'none' }); }
+      else { out.push({ n1: String(n1++), n2: String(n2++), sign: '', text, bg: 'transparent', fg: 'var(--fg)', signColor: 'var(--fg)', bt: 'none' }); }
+    }
+  }
+  return out;
+}
+function defaultSel(view) {
+  if (view === 'all') return { kind: 'root' };
+  if (view === 'project') return { kind: 'project', id: 'nova' };
+  return { kind: 'worktree', id: 'grasp/parser-v2' };
+}
+
+class Component extends DCLogic {
+  constructor() {
+    super(...arguments);
+    this.state = {
+      sel: null,
+      lastWt: 'grasp/parser-v2',
+      expanded: ['grasp', 'nova'],
+      tab: 'changes',
+      file: { changes: null, branch: null },
+      chips: { dirty: false, unpushed: false, merged: false, stale: false },
+      q: '',
+      sort: { key: 'repo', dir: 1 },
+      removed: [],
+      scanning: true,
+    };
+    this._timer = null;
+  }
+
+  componentDidMount() { this.finishLater(); }
+  componentWillUnmount() { clearTimeout(this._timer); }
+
+  finishLater() {
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => this.setState({ scanning: false }), SCAN_MS);
+  }
+
+  select(sel) {
+    const patch = { sel, tab: 'changes', file: { changes: null, branch: null } };
+    if (sel.kind === 'worktree') {
+      // Remember the last visited worktree so the tables can mark the row you came from.
+      patch.lastWt = sel.id;
+      const repoId = sel.id.split('/')[0];
+      if (!this.state.expanded.includes(repoId)) patch.expanded = [...this.state.expanded, repoId];
+    }
+    this.setState(patch);
+  }
+
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const staleDays = Number(this.props.staleDays ?? 30) || 30;
+    const { expanded, tab, file, chips, q, sort, removed, scanning } = this.state;
+    const sel = this.state.sel || defaultSel(this.props.initialView);
+
+    // Apply the scan phase: while scanning, `late` worktrees have no status yet and their project is still in progress.
+    const repos = REPOS.filter(r => !removed.includes(r.id)).map(r => {
+      const hasLate = r.wts.some(w => w.late);
+      const wts = r.wts.map(w => (scanning && w.late) ? { ...w, st: null, up: null } : w);
+      const status = r.failed ? 'failed' : (scanning && hasLate) ? 'scanning' : 'done';
+      return { ...r, wts, status };
+    });
+
+    const allRows = [];
+    for (const repo of repos) {
+      if (repo.failed) { allRows.push({ id: repo.id + '/#', repo, wt: null, failed: true }); continue; }
+      for (const wt of repo.wts) allRows.push({ id: repo.id + '/' + (wt.branch || wt.head), repo, wt, failed: false });
+    }
+
+    const preds = {
+      dirty: r => !!(r.wt && r.wt.st && (r.wt.st.s + r.wt.st.u + r.wt.st.n) > 0),
+      unpushed: r => !!(r.wt && r.wt.up && (r.wt.up.none || r.wt.up.gone || r.wt.up.a > 0)),
+      merged: r => !!(r.wt && r.wt.merged === true),
+      stale: r => !!(r.wt && r.wt.age > staleDays * D),
+    };
+    const ql = q.trim().toLowerCase();
+    const matchesText = r => {
+      if (!ql) return true;
+      const hay = [r.repo.name, r.repo.path, r.wt ? (r.wt.branch || r.wt.head) : '', r.wt ? wtPath(r.repo, r.wt) : ''].join(' ').toLowerCase();
+      return hay.includes(ql);
+    };
+
+    // ---- sidebar tree ----
+    const dotFor = r => preds.dirty(r) ? 'var(--c-dirty)' : preds.unpushed(r) ? 'var(--c-ahead)' : preds.merged(r) ? 'var(--c-merged)' : preds.stale(r) ? 'var(--c-stale)' : 'transparent';
+    const nodes = [];
+    const isRoot = sel.kind === 'root';
+    // Three indent levels: root label at 10px (no chevron), project at 28px (chevron), worktree at 48px.
+    nodes.push({
+      sel: isRoot ? '1' : '0', pick: () => this.select({ kind: 'root' }), tip: 'Every worktree of every project',
+      pad: 10, chevD: 'none', chevRot: '0', toggle: () => {},
+      sansD: 'block', monoD: 'none', label: 'All projects', weight: '600', color: 'var(--fg)',
+      errD: 'none', scanD: 'none', dotD: 'none', dot: 'transparent',
+      c1d: 'none', c1: '', c2d: 'none', c2: '', c3d: 'none', c3: '', c4d: 'none', c4: '',
+    });
+    const byName = [...repos].sort((a, b) => a.name.localeCompare(b.name));
+    for (const repo of byName) {
+      const rows = allRows.filter(r => r.repo.id === repo.id);
+      const textHit = ql && repo.name.toLowerCase().includes(ql);
+      const wtHits = rows.filter(matchesText);
+      if (ql && !textHit && wtHits.length === 0) continue;
+      const open = expanded.includes(repo.id) || (ql && !textHit);
+      const c1 = rows.filter(preds.dirty).length, c2 = rows.filter(preds.unpushed).length, c3 = rows.filter(preds.merged).length, c4 = rows.filter(preds.stale).length;
+      const selHere = sel.kind === 'project' && sel.id === repo.id;
+      nodes.push({
+        sel: selHere ? '1' : '0', pick: () => this.select({ kind: 'project', id: repo.id }),
+        tip: repo.failed ? repo.path + '\n' + repo.err : repo.path + '\n' + c1 + ' dirty · ' + c2 + ' unpushed · ' + c3 + ' merged · ' + c4 + ' stale',
+        pad: 10, chevD: repo.failed ? 'none' : 'block', chevRot: open ? '90' : '0',
+        toggle: (e) => { e.stopPropagation(); const cur = this.state.expanded; this.setState({ expanded: cur.includes(repo.id) ? cur.filter(x => x !== repo.id) : [...cur, repo.id] }); },
+        sansD: 'block', monoD: 'none', label: repo.name, weight: '500', color: repo.failed ? 'var(--muted)' : 'var(--fg)',
+        errD: repo.failed ? 'block' : 'none', scanD: repo.status === 'scanning' ? 'inline' : 'none', dotD: 'none', dot: 'transparent',
+        // Colour alone carries the category (same colours as the chips); the tooltip spells it out.
+        c1d: c1 ? 'inline' : 'none', c1: String(c1), c2d: c2 ? 'inline' : 'none', c2: String(c2), c3d: c3 ? 'inline' : 'none', c3: String(c3), c4d: c4 ? 'inline' : 'none', c4: String(c4),
+      });
+      if (!open || repo.failed) continue;
+      for (const r of (ql && !textHit ? wtHits : rows)) {
+        const wt = r.wt;
+        const selHere = sel.kind === 'worktree' && sel.id === r.id;
+        nodes.push({
+          sel: selHere ? '1' : '0', pick: () => this.select({ kind: 'worktree', id: r.id }),
+          tip: (wt.branch || 'detached ' + wt.head) + '\n' + (wt.err || wtPath(repo, wt)),
+          pad: 48, chevD: 'none', chevRot: '0', toggle: () => {},
+          sansD: 'none', monoD: 'block', label: wt.branch || '(detached ' + wt.head + ')', weight: '400', color: wt.err ? 'var(--muted)' : wt.branch ? 'var(--fg)' : 'var(--muted)',
+          errD: wt.err ? 'block' : 'none', scanD: (wt.st === null && !wt.err) ? 'inline' : 'none', dotD: wt.err ? 'none' : 'inline-block', dot: dotFor(r),
+          c1d: 'none', c1: '', c2d: 'none', c2: '', c3d: 'none', c3: '', c4d: 'none', c4: '',
+        });
+      }
+    }
+
+    // ---- table (root: every project; project: one project) ----
+    const isProject = sel.kind === 'project';
+    const isWorktree = sel.kind === 'worktree';
+    const anyChip = Object.values(chips).some(Boolean);
+    let tableRows = isProject ? allRows.filter(r => r.repo.id === sel.id) : allRows;
+    tableRows = tableRows.filter(r => {
+      if (isRoot) for (const k in preds) if (chips[k] && !preds[k](r)) return false;
+      return matchesText(r);
+    });
+    const keyOf = {
+      repo: r => [r.repo.name, r.wt && r.wt.primary ? 0 : 1, r.wt ? (r.wt.branch || '~') : ''],
+      worktree: r => [r.wt ? (r.wt.branch || '~' + r.wt.head) : '~~'],
+      changes: r => [r.wt && r.wt.st ? r.wt.st.s + r.wt.st.u + r.wt.st.n : -1],
+      upstream: r => [r.wt && r.wt.up && !r.wt.up.none && !r.wt.up.gone ? r.wt.up.a : -1, r.wt && r.wt.up && r.wt.up.b ? r.wt.up.b : 0],
+      merged: r => [r.wt ? (r.wt.merged === true ? 0 : r.wt.merged === false ? 1 : 2) : 3],
+      last: r => [r.wt ? r.wt.age : Number.MAX_SAFE_INTEGER],
+    };
+    const kf = keyOf[sort.key];
+    tableRows.sort((a, b) => sort.dir * cmp(kf(a), kf(b)) || cmp(keyOf.repo(a), keyOf.repo(b)));
+
+    const cellsFor = (r) => {
+      const wt = r.wt;
+      const err = r.failed ? r.repo.err : (wt.err || '');
+      let wtLabel = '—', wtColor = 'var(--faint)';
+      if (wt) { wtLabel = wt.branch || '(detached ' + wt.head + ')'; wtColor = wt.branch ? 'var(--fg)' : 'var(--muted)'; }
+      const badges = [];
+      if (wt && wt.primary) badges.push('primary');
+      if (wt && wt.locked) badges.push('locked');
+      if (wt && wt.prunable) badges.push('prunable');
+      // Three visual states: not applicable (em dash, faint), pending (ellipsis, scan colour), clean (en dash, muted).
+      let changes = '—', changesColor = 'var(--faint)';
+      if (wt && !err) {
+        if (wt.st === null) { changes = '…'; changesColor = 'var(--c-ahead)'; }
+        else {
+          const parts = [];
+          if (wt.st.s) parts.push('+' + wt.st.s);
+          if (wt.st.u) parts.push('~' + wt.st.u);
+          if (wt.st.n) parts.push('?' + wt.st.n);
+          if (parts.length) { changes = parts.join(' '); changesColor = 'var(--c-dirty)'; } else { changes = '–'; changesColor = 'var(--muted)'; }
+        }
+      }
+      // Upstream is ref-level data, so it survives a missing working directory; only the status query needs the directory.
+      let up = '—', upColor = 'var(--faint)', upName = '—';
+      if (wt) {
+        if (wt.up === null) { up = '…'; upColor = 'var(--c-ahead)'; upName = '…'; }
+        else if (wt.up.none) { up = 'none'; upColor = 'var(--c-ahead)'; upName = 'none'; }
+        else if (wt.up.gone) { up = 'gone'; upColor = 'var(--c-err)'; upName = wt.up.name + ' (gone)'; }
+        else {
+          const parts = [];
+          if (wt.up.a) parts.push('↑' + wt.up.a);
+          if (wt.up.b) parts.push('↓' + wt.up.b);
+          if (parts.length) { up = parts.join(' '); upColor = wt.up.a ? 'var(--c-ahead)' : 'var(--muted)'; } else { up = '='; upColor = 'var(--muted)'; }
+          upName = wt.up.name + ' ' + up;
+        }
+      }
+      let merged = '—', mergedColor = 'var(--faint)';
+      if (wt) {
+        if (wt.merged === true) { merged = 'yes'; mergedColor = 'var(--c-merged)'; }
+        else if (wt.merged === false) { merged = 'no'; mergedColor = 'var(--fg)'; }
+        else { merged = 'main ref'; }
+      }
+      let last = '—', lastColor = 'var(--faint)', lastAbs = '';
+      if (wt) { last = rel(wt.age); lastAbs = abs(wt.age); lastColor = wt.age > staleDays * D ? 'var(--c-stale)' : 'var(--fg)'; }
+      return { err, wtLabel, wtColor, badges, changes, changesColor, up, upColor, upName, merged, mergedColor, last, lastColor, lastAbs };
+    };
+
+    let prevRepo = null;
+    const groupedByRepo = sort.key === 'repo';
+    const rows = tableRows.map(r => {
+      const c = cellsFor(r);
+      const sameRepo = groupedByRepo && prevRepo === r.repo.id;
+      prevRepo = r.repo.id;
+      return {
+        sel: r.id === this.state.lastWt ? '1' : '0',
+        tip: c.err || (r.wt ? wtPath(r.repo, r.wt) : r.repo.path),
+        errVis: c.err ? 'visible' : 'hidden',
+        repoD: isRoot ? 'block' : 'none',
+        repoName: r.repo.name,
+        repoColor: sameRepo ? 'var(--faint)' : 'var(--fg)',
+        wtLabel: c.wtLabel, wtColor: c.wtColor,
+        b1: c.badges[0] || '', b1d: c.badges[0] ? 'inline-block' : 'none',
+        b2: c.badges[1] || '', b2d: c.badges[1] ? 'inline-block' : 'none',
+        b3: c.badges[2] || '', b3d: c.badges[2] ? 'inline-block' : 'none',
+        changes: c.changes, changesColor: c.changesColor, up: c.up, upColor: c.upColor,
+        merged: c.merged, mergedColor: c.mergedColor, last: c.last, lastColor: c.lastColor, lastAbs: c.lastAbs,
+        pick: r.failed ? () => this.select({ kind: 'project', id: r.repo.id }) : () => this.select({ kind: 'worktree', id: r.id }),
+      };
+    });
+
+    const chipView = {};
+    for (const k in preds) {
+      const on = chips[k];
+      chipView[k] = {
+        count: allRows.filter(preds[k]).length,
+        bg: on ? 'var(--chip-on)' : 'var(--chip)',
+        fg: on ? 'var(--chip-on-fg)' : 'var(--fg)',
+        border: on ? 'var(--chip-on)' : 'var(--line2)',
+        label: k === 'stale' ? 'stale >' + staleDays + 'd' : k,
+        // Handlers read this.state at click time so consecutive clicks never clobber each other.
+        toggle: () => { const cur = this.state.chips; this.setState({ chips: { ...cur, [k]: !cur[k] } }); },
+      };
+    }
+    // Chevron points up for ascending, down for descending.
+    const hdr = {};
+    for (const k of ['repo', 'worktree', 'changes', 'upstream', 'merged', 'last']) {
+      const on = sort.key === k;
+      hdr[k] = {
+        color: on ? 'var(--fg)' : 'var(--muted)',
+        op: on ? '1' : '0',
+        rot: on && sort.dir === 1 ? '180' : '0',
+        click: () => { const cur = this.state.sort; this.setState({ sort: cur.key === k ? { key: k, dir: -cur.dir } : { key: k, dir: DEFAULT_DIR[k] } }); },
+      };
+    }
+
+    // ---- project header (always fully shaped: holes inside a hidden section must still resolve) ----
+    let proj = { name: '', path: '', main: '', scan: '', scanColor: 'var(--muted)', errD: 'none', err: '', remove: () => {} };
+    if (isProject) {
+      const repo = repos.find(r => r.id === sel.id);
+      if (repo) proj = {
+        name: repo.name, path: repo.path, main: repo.main || '—',
+        scan: repo.status, scanColor: repo.status === 'failed' ? 'var(--c-err)' : repo.status === 'scanning' ? 'var(--c-ahead)' : 'var(--muted)',
+        errD: repo.failed ? 'block' : 'none', err: repo.err || '',
+        remove: () => this.setState({ removed: [...this.state.removed, repo.id], sel: { kind: 'root' } }),
+      };
+    }
+
+    // ---- worktree view (defaults fully shaped for the same reason) ----
+    let wt = {
+      repoName: '', branch: '', branchColor: 'var(--fg)', path: '', head: '',
+      b1: '', b1d: 'none', b2: '', b2d: 'none', b3: '', b3d: 'none',
+      changes: '', changesColor: 'var(--fg)', up: '', upColor: 'var(--fg)', merged: '', mergedColor: 'var(--fg)',
+      last: '', lastColor: 'var(--fg)', lastAbs: '', extraD: 'none', extra: '', extraColor: 'var(--muted)',
+    };
+    const emptyTab = { on: false, count: '', label: 'vs main', color: 'var(--muted)', border: 'transparent', pick: () => {} };
+    let tabView = { changes: { ...emptyTab }, branch: { ...emptyTab } }, files = [], lines = [], diffHead = {}, notice = '', tabSummary = '';
+    if (isWorktree) {
+      const r = allRows.find(x => x.id === sel.id);
+      if (r) {
+        const c = cellsFor(r);
+        const w = r.wt;
+        const extra = w.err ? 'error: ' + w.err : w.locked ? 'locked: ' + w.locked : w.prunable ? 'prunable: ' + w.prunable : '';
+        wt = {
+          repoName: r.repo.name, branch: c.wtLabel, branchColor: c.wtColor, path: wtPath(r.repo, w), head: w.head,
+          b1: c.badges[0] || '', b1d: c.badges[0] ? 'inline-block' : 'none',
+          b2: c.badges[1] || '', b2d: c.badges[1] ? 'inline-block' : 'none',
+          b3: c.badges[2] || '', b3d: c.badges[2] ? 'inline-block' : 'none',
+          changes: c.changes, changesColor: c.changesColor, up: c.upName, upColor: c.upColor,
+          merged: c.merged, mergedColor: c.mergedColor, last: c.last, lastColor: c.lastColor, lastAbs: c.lastAbs,
+          extraD: extra ? 'inline' : 'none', extra, extraColor: w.err ? 'var(--c-err)' : 'var(--muted)',
+        };
+        const d = diffFor(r.id, r.repo, w);
+        const mainRef = r.repo.main || 'main';
+        const pending = w.st === null && !w.err;
+        const branchFiles = w.primary || w.merged === true ? [] : d.branch;
+        const list = tab === 'changes' ? (pending || w.err ? [] : d.changes) : branchFiles;
+        for (const k of ['changes', 'branch']) {
+          const on = tab === k;
+          const n = k === 'changes' ? (pending || w.err ? '' : String(d.changes.length)) : String(branchFiles.length);
+          tabView[k] = {
+            on, count: n, label: 'vs ' + mainRef,
+            color: on ? 'var(--fg)' : 'var(--muted)', border: on ? 'var(--fg)' : 'transparent',
+            pick: () => this.setState({ tab: k }),
+          };
+        }
+        if (tab === 'changes') {
+          if (w.err) notice = 'Status unavailable: ' + w.err;
+          else if (pending) notice = 'Waiting for the scan to reach this worktree…';
+          else if (list.length === 0) notice = 'No uncommitted changes.';
+          else if (list.every(f => f.kind === '?')) notice = 'Only untracked files — git has no diff for them.';
+        } else {
+          if (w.primary) notice = 'This worktree is on the main ref; there is nothing to compare against.';
+          else if (w.merged === true) notice = 'Already an ancestor of ' + mainRef + ' — no commits beyond it.';
+          else if (list.length === 0) notice = 'No differences against ' + mainRef + '.';
+        }
+        // File list with group headers (working tree: staged / unstaged / untracked; branch: one group).
+        const groups = tab === 'changes'
+          ? [['Staged', list.filter(f => f.staged)], ['Unstaged', list.filter(f => !f.staged && f.kind !== '?')], ['Untracked', list.filter(f => f.kind === '?')]]
+          : [['Files', list]];
+        const selectable = list.filter(f => f.kind !== '?');
+        const curPath = file[tab] && selectable.some(f => f.path === file[tab]) ? file[tab] : (selectable[0] ? selectable[0].path : null);
+        for (const [name, fs] of groups) {
+          if (!fs.length) continue;
+          // Group header rows: data-sel "-" so they neither highlight nor hover; letter-spaced small caps.
+          files.push({ sel: '-', pick: () => {}, tip: '', mt: files.length ? 8 : 0, size: 11, ls: 0.04, fg: 'var(--muted)', kindD: 'none', kind: '', kindColor: '', dir: '', base: name.toUpperCase() + ' · ' + fs.length, countsD: 'none', add: '', del: '' });
+          for (const f of fs) {
+            const isSel = f.path === curPath;
+            const cut = f.path.lastIndexOf('/') + 1;
+            files.push({
+              sel: isSel ? '1' : '0', pick: f.kind === '?' ? () => {} : () => this.setState({ file: { ...this.state.file, [tab]: f.path } }),
+              tip: f.kind === '?' ? f.path + '\nuntracked — git has no diff for it' : f.path,
+              mt: 0, size: 12, ls: 0, fg: f.kind === '?' ? 'var(--muted)' : 'var(--fg)',
+              kindD: 'inline', kind: f.kind, kindColor: KIND_COLOR[f.kind],
+              // Directory truncates from the left, basename never truncates: the distinguishing part stays visible.
+              dir: f.path.slice(0, cut), base: f.path.slice(cut),
+              countsD: f.kind === '?' ? 'none' : 'inline', add: '+' + f.add, del: '-' + f.del,
+            });
+          }
+        }
+        const cur = selectable.find(f => f.path === curPath);
+        if (cur) {
+          lines = diffLines(cur);
+          diffHead = { path: cur.path, meta: tab === 'changes' ? (cur.staged ? 'staged' : 'unstaged') : 'vs ' + mainRef, add: '+' + cur.add, del: '-' + cur.del };
+        }
+        const tA = list.reduce((n, f) => n + f.add, 0), tD = list.reduce((n, f) => n + f.del, 0);
+        tabSummary = list.length ? list.length + ' files · +' + tA + ' -' + tD : '';
+      }
+    }
+
+    const finished = repos.filter(r => r.status !== 'scanning').length;
+    const inProgress = finished < repos.length;
+    const wtCount = repos.reduce((n, r) => n + r.wts.length, 0);
+    const filtered = anyChip || ql;
+
+    return {
+      theme, q,
+      nodes,
+      isTable: isRoot || isProject, isRoot, isProject, isWorktree,
+      rows, noRows: rows.length === 0,
+      noRowsText: repos.length === 0 ? 'No projects yet — use Add project to get started.' : isProject && !ql ? 'This project has no scanned worktrees.' : 'No worktree matches the current filter.',
+      repoColD: isRoot ? 'flex' : 'none',
+      chip: chipView, hdr, proj,
+      totals: (filtered ? 'showing ' + rows.length + ' of ' + wtCount + ' · ' : '') + repos.length + ' projects · ' + wtCount + ' worktrees',
+      wt, tab: tabView, tabSummary, files, lines,
+      noticeD: notice ? 'flex' : 'none', notice,
+      diffD: notice ? 'none' : 'flex',
+      diffHead: diffHead.path ? diffHead : { path: '', meta: '', add: '', del: '' },
+      progress: inProgress ? 'scanning ' + finished + '/' + repos.length : 'idle',
+      progressColor: inProgress ? 'var(--c-ahead)' : 'var(--muted)',
+      setQ: (e) => this.setState({ q: e.target.value }),
+      onKey: (e) => { if (e.key === 'Escape') this.setState({ q: '' }); },
+      refresh: () => { this.setState({ scanning: true }); this.finishLater(); },
+      // The app opens a folder picker here; the prototype restores the most recently removed project instead.
+      addProject: () => { const rm = this.state.removed; if (rm.length) this.setState({ removed: rm.slice(0, -1) }); },
+      noop: () => {},
+    };
+  }
+}
+</script>
+</body>
+</html>

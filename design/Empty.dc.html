@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f5f7; }
+    a { color: #2f66b8; } a:hover { color: #244f8f; }
+    [data-theme] a { color: var(--c-ahead); } [data-theme] a:hover { color: var(--fg); }
+    [data-theme="light"] {
+      --bg: #f4f5f7; --panel: #ffffff; --fg: #1b1f24; --muted: #6a717c; --faint: #949ba5;
+      --line: #e2e5e9; --line2: #cbd0d6; --hover: #eef0f3; --sel: #e3eaf6; --c-ahead: #2f66b8;
+    }
+    [data-theme="dark"] {
+      --bg: #141619; --panel: #1a1d21; --fg: #e4e7ea; --muted: #8d949e; --faint: #666d77;
+      --line: #282c33; --line2: #373d46; --hover: #20242a; --sel: #243248; --c-ahead: #75a6ea;
+    }
+    .btn:hover { background: var(--hover) !important; }
+  </style>
+</helmet>
+<div data-theme="{{theme}}" style="width: 1280px; height: 800px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--fg); font-family: 'IBM Plex Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 12.5px; line-height: 1.4;">
+
+  <div style="height: 44px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line);">
+    <button class="btn" onClick="{{noop}}" style="height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--fg); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"></path></svg>
+      <span>Add project</span>
+    </button>
+    <button style="height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--faint); font-family: inherit; font-size: 12px; font-weight: 500; cursor: default;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"></path><path d="M13.5 3v3h-3"></path></svg>
+      <span>Refresh</span>
+    </button>
+    <div style="margin-left: 8px; height: 28px; width: 280px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--faint);">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4"></circle><path d="M10 10l3.5 3.5"></path></svg>
+      <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px;">filter project, branch, path</span>
+    </div>
+    <div style="flex: 1 1 0;"></div>
+    <div style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);">idle</div>
+  </div>
+
+  <div style="flex: 1 1 0; min-height: 0; display: flex;">
+    <div style="width: 260px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line2); background: var(--bg); padding: 6px 0;">
+      <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; background: var(--sel); font-size: 12px; user-select: none;">
+        <span style="width: 12px; flex: none;"></span>
+        <span style="flex: 1 1 0; font-weight: 600;">All projects</span>
+        <span style="font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted);">0</span>
+      </div>
+      <div style="padding: 10px 16px; color: var(--faint); font-size: 12px; text-wrap: pretty;">Projects you add appear here, each with its worktrees underneath.</div>
+    </div>
+
+    <div style="flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; background: var(--panel);">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 380px; text-align: center;">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--faint);">
+          <path d="M20 36V14"></path>
+          <path d="M20 22c0-5 4-8 10-8"></path>
+          <path d="M20 28c0-5-4-8-10-8"></path>
+          <circle cx="20" cy="10" r="3"></circle>
+          <circle cx="30" cy="14" r="3"></circle>
+          <circle cx="10" cy="20" r="3"></circle>
+        </svg>
+        <div style="font-size: 15px; font-weight: 600;">No projects yet</div>
+        <div style="color: var(--muted); text-wrap: pretty;">Add a repository to see every worktree it has checked out — uncommitted changes, unpushed commits, merge status, idle time, and the diff of each one.</div>
+        <button class="btn" onClick="{{noop}}" style="margin-top: 6px; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 4px; background: var(--panel); color: var(--fg); font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"></path></svg>
+          <span>Add project</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Appearance"},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.theme ?? 'light', noop: () => {} };
+  }
+}
+</script>
+</body>
+</html>
