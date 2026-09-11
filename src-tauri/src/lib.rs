@@ -1,3 +1,4 @@
+pub mod differ;
 pub mod git;
 pub mod model;
 pub mod registry;
