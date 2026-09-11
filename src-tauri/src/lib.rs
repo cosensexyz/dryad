@@ -3,6 +3,7 @@ pub mod git;
 pub mod model;
 pub mod registry;
 pub mod scanner;
+pub mod settings;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
