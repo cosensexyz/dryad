@@ -17,7 +17,7 @@ export interface Patch { path: string; hunks: Hunk[]; truncated: boolean; }
 export type DiffTab = 'workingTree' | 'branch';
 
 /** Scan events emitted by the backend; every payload carries the scan generation. */
-export interface ScanStarted { generation: number; total: number; }
+export interface ScanStarted { generation: number; total: number; full: boolean; }
 export interface ProjectScanned { generation: number; project: Project; worktrees: Worktree[]; }
 export interface ProjectFailed { generation: number; path: string; error: string; }
 export interface WorktreeStatusEvent { generation: number; project: string; path: string; status: WorktreeStatus; }

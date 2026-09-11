@@ -44,6 +44,18 @@ describe('scan event reduction', () => {
     expect(s.finished).toBe(1);
   });
 
+  it('a removed project is not resurrected by late scan events', () => {
+    const s = createState();
+    setRegistered(s, ['/r/a', '/r/b']);
+    applyScanEvent(s, 'scan:started', { generation: 1, total: 1, full: true });
+    applyScanEvent(s, 'project:scanned', { generation: 1, project: proj('/r/a'), worktrees: [wt('/r/a', 'x')] });
+    setRegistered(s, ['/r/b']); // /r/a was removed from the registry
+    expect(applyScanEvent(s, 'project:scanned', { generation: 1, project: proj('/r/a'), worktrees: [] })).toBe(false);
+    expect(s.projects.has('/r/a')).toBe(false);
+    expect(applyScanEvent(s, 'project:failed', { generation: 1, path: '/r/a', error: 'x' })).toBe(false);
+    expect(s.projects.has('/r/a')).toBe(false);
+  });
+
   it('selecting a worktree expands its project and remembers it', () => {
     const s = createState();
     select(s, { kind: 'worktree', project: '/r/a', path: '/r/a/.worktrees/x' });

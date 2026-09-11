@@ -51,6 +51,17 @@ async fn main_ref_prefers_origin_head_then_local_main_then_master() {
 }
 
 #[tokio::test]
+async fn dangling_origin_head_falls_back_to_local_master() {
+    let t = TempRepo::new();
+    t.git(&t.root, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/does-not-exist"]);
+    let g = git();
+    assert_eq!(resolve_main_ref(&g, &t.root).await.as_deref(), Some("master"));
+    let r = scan_repo(&g, &t.root).await.unwrap();
+    assert_eq!(r.project.main_ref.as_deref(), Some("master"));
+    assert!(!r.worktrees.is_empty());
+}
+
+#[tokio::test]
 async fn scan_repo_reports_reference_level_data_for_every_worktree() {
     let s = scenario();
     let g = git();

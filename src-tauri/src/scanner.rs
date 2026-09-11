@@ -12,7 +12,11 @@ pub async fn resolve_main_ref(git: &Git, repo: &Path) -> Option<String> {
     if let Ok(out) = git.run(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).await {
         if out.code == 0 {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            return Some(s.strip_prefix("refs/remotes/").unwrap_or(&s).to_string());
+            if let Ok(verified) = git.run(repo, &["rev-parse", "--verify", "-q", &s]).await {
+                if verified.code == 0 {
+                    return Some(s.strip_prefix("refs/remotes/").unwrap_or(&s).to_string());
+                }
+            }
         }
     }
     for name in ["main", "master"] {

@@ -21,6 +21,8 @@ export interface State {
   diffPatches: Map<string, Patch>;
   diffSeq: number; diffLoading: boolean; diffError: string | null;
   gitError: string | null; registryWarning: string | null;
+  /** Projects explicitly dropped by reconcile; late scan events for them are ignored until re-registered. */
+  removed: Set<string>;
 }
 
 export const listKey = (wt: string, tab: DiffTab) => `${wt}|${tab}`;
@@ -38,15 +40,17 @@ export function createState(): State {
     diffLists: new Map(), diffPatches: new Map(),
     diffSeq: 0, diffLoading: false, diffError: null,
     gitError: null, registryWarning: null,
+    removed: new Set(),
   };
 }
 
 /** Registered paths appear immediately as pending projects; unregistered ones disappear with their worktrees. */
 export function setRegistered(s: State, paths: string[]): void {
   for (const p of paths) {
+    s.removed.delete(p);
     if (!s.projects.has(p)) s.projects.set(p, { project: { path: p, name: p.split(/[\\/]/).filter(Boolean).pop() ?? p, mainRef: null }, scan: 'pending', error: null });
   }
-  for (const p of [...s.projects.keys()]) if (!paths.includes(p)) { s.projects.delete(p); dropWorktrees(s, p); }
+  for (const p of [...s.projects.keys()]) if (!paths.includes(p)) { s.projects.delete(p); s.removed.add(p); dropWorktrees(s, p); }
 }
 
 function dropWorktrees(s: State, project: string): void {
@@ -70,6 +74,8 @@ export function applyScanEvent(s: State, name: ScanEventName, payload: unknown):
     return true;
   }
   if (p.generation !== s.generation) return false;
+  if (name === 'project:scanned' && s.removed.has(p.project.path as string)) return false;
+  if (name === 'project:failed' && s.removed.has(p.path as string)) return false;
   switch (name) {
     case 'project:scanned': {
       const path = p.project.path as string;
