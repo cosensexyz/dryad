@@ -1,6 +1,8 @@
 //! Pure parsers for the git output formats Dryad reads. No I/O here.
 
 use crate::model::Counts;
+use crate::model::Upstream;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WorktreeEntry {
@@ -95,6 +97,86 @@ pub fn parse_status_v2(out: &[u8]) -> StatusParsed {
     s
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefInfo { pub time: i64, pub upstream: Upstream }
+
+pub fn parse_ref_info(out: &[u8]) -> HashMap<String, RefInfo> {
+    String::from_utf8_lossy(out)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let name = f.next()?;
+            let time: i64 = f.next()?.parse().ok()?;
+            let up = f.next().unwrap_or("");
+            let track = f.next().unwrap_or("").trim_matches(|c| c == '[' || c == ']');
+            let upstream = if up.is_empty() {
+                Upstream::None
+            } else if track == "gone" {
+                Upstream::Gone { name: up.to_string() }
+            } else {
+                let (mut ahead, mut behind) = (0u32, 0u32);
+                for part in track.split(',') {
+                    let part = part.trim();
+                    if let Some(n) = part.strip_prefix("ahead ") { ahead = n.parse().unwrap_or(0); }
+                    if let Some(n) = part.strip_prefix("behind ") { behind = n.parse().unwrap_or(0); }
+                }
+                Upstream::Tracking { name: up.to_string(), ahead, behind }
+            };
+            Some((name.to_string(), RefInfo { time, upstream }))
+        })
+        .collect()
+}
+
+pub fn parse_ref_names(out: &[u8]) -> HashSet<String> {
+    String::from_utf8_lossy(out).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameStatus { pub status: char, pub path: String, pub old_path: Option<String> }
+
+pub fn parse_name_status(out: &[u8]) -> Vec<NameStatus> {
+    let recs = nul_records(out);
+    let mut v = Vec::new();
+    let mut i = 0;
+    while i + 1 < recs.len() {
+        let status = recs[i].chars().next().unwrap_or('M');
+        if status == 'R' || status == 'C' {
+            if i + 2 < recs.len() {
+                v.push(NameStatus { status, path: recs[i + 2].clone(), old_path: Some(recs[i + 1].clone()) });
+            }
+            i += 3;
+        } else {
+            v.push(NameStatus { status, path: recs[i + 1].clone(), old_path: None });
+            i += 2;
+        }
+    }
+    v
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumStat { pub added: Option<u32>, pub deleted: Option<u32>, pub path: String }
+
+pub fn parse_numstat(out: &[u8]) -> Vec<NumStat> {
+    let recs = nul_records(out);
+    let mut v = Vec::new();
+    let mut i = 0;
+    while i < recs.len() {
+        let mut cols = recs[i].splitn(3, '\t');
+        let added = cols.next().and_then(|t| t.parse().ok());
+        let deleted = cols.next().and_then(|t| t.parse().ok());
+        let path = cols.next().unwrap_or("");
+        i += 1;
+        if path.is_empty() {
+            // rename: the record ends after the second tab; old and new paths follow as two records
+            if i + 1 < recs.len() { v.push(NumStat { added, deleted, path: recs[i + 1].clone() }); }
+            i += 2;
+        } else {
+            v.push(NumStat { added, deleted, path: path.to_string() });
+        }
+    }
+    v
+}
+
 #[cfg(test)]
 mod worktree_tests {
     use super::*;
@@ -185,5 +267,45 @@ mod status_tests {
         assert_eq!(s.upstream, None);
         assert_eq!(s.ab, None);
         assert!(s.untracked.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ref_and_diff_list_tests {
+    use super::*;
+
+    #[test]
+    fn ref_info_and_names() {
+        let out = b"master\t1757400000\torigin/master\t\nfeat/x\t1757300000\torigin/feat/x\t[ahead 3, behind 1]\n\
+gone\t1600000000\torigin/gone\t[gone]\nlocal\t1500000000\t\t\nbehind\t1400000000\torigin/behind\t[behind 2]\n";
+        let r = parse_ref_info(out);
+        assert_eq!(r["master"], RefInfo { time: 1757400000, upstream: Upstream::Tracking { name: "origin/master".into(), ahead: 0, behind: 0 } });
+        assert_eq!(r["feat/x"].upstream, Upstream::Tracking { name: "origin/feat/x".into(), ahead: 3, behind: 1 });
+        assert_eq!(r["gone"].upstream, Upstream::Gone { name: "origin/gone".into() });
+        assert_eq!(r["local"].upstream, Upstream::None);
+        assert_eq!(r["behind"].upstream, Upstream::Tracking { name: "origin/behind".into(), ahead: 0, behind: 2 });
+        let names = parse_ref_names(b"master\nhotfix-401\n");
+        assert!(names.contains("hotfix-401") && names.len() == 2);
+        assert!(parse_ref_names(b"").is_empty());
+    }
+
+    #[test]
+    fn name_status_handles_plain_and_rename_records() {
+        let out = b"M\0a.go\0A\0b.go\0R100\0old.go\0new.go\0D\0gone.go\0";
+        let v = parse_name_status(out);
+        assert_eq!(v.len(), 4);
+        assert_eq!((v[0].status, v[0].path.as_str()), ('M', "a.go"));
+        assert_eq!((v[2].status, v[2].path.as_str(), v[2].old_path.as_deref()), ('R', "new.go", Some("old.go")));
+        assert_eq!(v[3].status, 'D');
+    }
+
+    #[test]
+    fn numstat_handles_binary_and_rename_records() {
+        let out = b"12\t3\ta.go\0-\t-\timg.png\05\t0\t\0old.go\0new.go\0";
+        let v = parse_numstat(out);
+        assert_eq!(v.len(), 3);
+        assert_eq!((v[0].added, v[0].deleted, v[0].path.as_str()), (Some(12), Some(3), "a.go"));
+        assert_eq!((v[1].added, v[1].deleted), (None, None));
+        assert_eq!((v[2].added, v[2].path.as_str()), (Some(5), "new.go"));
     }
 }
