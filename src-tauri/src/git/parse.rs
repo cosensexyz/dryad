@@ -177,6 +177,38 @@ pub fn parse_numstat(out: &[u8]) -> Vec<NumStat> {
     v
 }
 
+use crate::model::{DiffLine, Hunk};
+
+fn hunk_starts(header: &str) -> Option<(u32, u32)> {
+    // "@@ -a[,b] +c[,d] @@ ..."
+    let body = header.strip_prefix("@@ -")?;
+    let (old, rest) = body.split_once(" +")?;
+    let (new, _) = rest.split_once(" @@")?;
+    let num = |s: &str| s.split(',').next().and_then(|n| n.parse::<u32>().ok());
+    Some((num(old)?, num(new)?))
+}
+
+pub fn parse_patch(text: &str, max_lines: usize) -> (Vec<Hunk>, bool) {
+    let mut hunks: Vec<Hunk> = Vec::new();
+    let mut count = 0usize;
+    for line in text.lines() {
+        if line.starts_with("@@") {
+            let (old_start, new_start) = hunk_starts(line).unwrap_or((0, 0));
+            hunks.push(Hunk { header: line.to_string(), old_start, new_start, lines: Vec::new() });
+            continue;
+        }
+        if line.starts_with("diff --git") && !hunks.is_empty() { break; }
+        let Some(h) = hunks.last_mut() else { continue };
+        let Some(sign) = line.chars().next() else { continue };
+        if sign == '\\' { continue; }
+        if !matches!(sign, ' ' | '+' | '-') { continue; }
+        if count >= max_lines { return (hunks, true); }
+        h.lines.push(DiffLine { sign, text: line[1..].to_string() });
+        count += 1;
+    }
+    (hunks, false)
+}
+
 #[cfg(test)]
 mod worktree_tests {
     use super::*;
@@ -307,5 +339,40 @@ gone\t1600000000\torigin/gone\t[gone]\nlocal\t1500000000\t\t\nbehind\t1400000000
         assert_eq!((v[0].added, v[0].deleted, v[0].path.as_str()), (Some(12), Some(3), "a.go"));
         assert_eq!((v[1].added, v[1].deleted), (None, None));
         assert_eq!((v[2].added, v[2].path.as_str()), (Some(5), "new.go"));
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    const P: &str = "diff --git a/x.rs b/x.rs\nindex 1..2 100644\n--- a/x.rs\n+++ b/x.rs\n\
+@@ -18,3 +18,4 @@ impl Parser {\n fn a() {}\n-fn b() {}\n+fn b2() {}\n+fn c() {}\n\
+@@ -64,2 +65,1 @@\n fn d() {}\n-// gone\n\\ No newline at end of file\n";
+
+    #[test]
+    fn parses_hunks_with_starts_and_signs() {
+        let (h, trunc) = parse_patch(P, 1000);
+        assert!(!trunc);
+        assert_eq!(h.len(), 2);
+        assert_eq!((h[0].old_start, h[0].new_start), (18, 18));
+        assert_eq!(h[0].header, "@@ -18,3 +18,4 @@ impl Parser {");
+        let signs: String = h[0].lines.iter().map(|l| l.sign).collect();
+        assert_eq!(signs, " -++");
+        assert_eq!(h[0].lines[2].text, "fn b2() {}");
+        assert_eq!(h[1].lines.len(), 2); // the "\ No newline" marker is dropped
+    }
+
+    #[test]
+    fn truncates_after_max_lines() {
+        let (h, trunc) = parse_patch(P, 3);
+        assert!(trunc);
+        let n: usize = h.iter().map(|x| x.lines.len()).sum();
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn empty_patch_yields_no_hunks() {
+        assert_eq!(parse_patch("", 10), (vec![], false));
     }
 }
