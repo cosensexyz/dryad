@@ -1,6 +1,7 @@
-import type { DiffTab } from './types';
-import type { Selection, SortKey, State } from './state';
+import type { DiffFile, DiffTab } from './types';
+import { listKey, patchKey, type ProjectEntry, type Selection, type SortKey, type State, type WorktreeEntry } from './state';
 import { absTime, chipsPass, compareRows, flattenTree, isDirty, isMerged, isStale, isUnpushed, matchesText, relTime, rowsOf, type Row } from './derive';
+import { patchRows } from './diffview';
 
 export interface Handlers {
   addProject(): void; refresh(): void; setQuery(q: string): void; toggleChip(k: keyof State['chips']): void;
@@ -182,7 +183,92 @@ export function mount(root: HTMLElement, hs: Handlers) {
   };
 }
 
-// Task 18 replaces this stub with the worktree view.
-export function renderWorktree(main: HTMLElement, _s: State, _now: number, _hs: Handlers, sel: { project: string; path: string }) {
-  main.replaceChildren(h('div', { class: 'empty' }, [`worktree view pending: ${sel.path}`]));
+export function worktreeNotice(s: Pick<State, 'tab' | 'diffError' | 'diffLoading'>, p: ProjectEntry, e: WorktreeEntry, list: { files: DiffFile[]; truncated: boolean } | undefined): string {
+  const mainRef = p.project.mainRef;
+  if (s.tab === 'workingTree') {
+    if (e.error) return `Status unavailable: ${e.error}`;
+    if (e.status === null) return 'Waiting for the scan to reach this worktree…';
+  } else {
+    if (e.wt.primary) return 'This worktree is on the main ref; there is nothing to compare against.';
+    if (e.wt.merged === true) return `Already an ancestor of ${mainRef ?? 'main'} — no commits beyond it.`;
+    if (!mainRef) return 'No main ref resolved for this project.';
+  }
+  if (s.diffError) return s.diffError;
+  if (!list) return s.diffLoading ? 'Loading…' : '';
+  if (list.files.length === 0) return s.tab === 'workingTree' ? 'No uncommitted changes.' : `No differences against ${mainRef}.`;
+  if (s.tab === 'workingTree' && list.files.every((f) => f.change === 'untracked')) return 'Only untracked files — git has no diff for them.';
+  return '';
+}
+
+const KIND: Record<DiffFile['change'], [string, string]> = { modified: ['M', 'c-dirty'], added: ['A', 'add-fg'], deleted: ['D', 'del-fg'], renamed: ['R', 'c-dirty'], untracked: ['?', 'muted'] };
+
+export function currentFile(s: State, list: { files: DiffFile[] } | undefined): DiffFile | undefined {
+  const selectable = (list?.files ?? []).filter((f) => f.change !== 'untracked');
+  const wanted = s.fileByTab[s.tab];
+  return selectable.find((f) => f.path === wanted) ?? selectable[0];
+}
+
+export function renderWorktree(main: HTMLElement, s: State, now: number, hs: Handlers, sel: { project: string; path: string }) {
+  const p = s.projects.get(sel.project), e = s.worktrees.get(sel.path);
+  if (!p || !e) { main.replaceChildren(h('div', { class: 'empty' }, ['This worktree is no longer listed.'])); return; }
+  const r: Row = { project: p.project, entry: e };
+  const c = cellsFor(r, s.staleDays, now);
+  const wt = e.wt, mainRef = p.project.mainRef ?? 'main';
+  const extra = e.error ? `error: ${e.error}` : wt.locked !== null ? `locked: ${wt.locked}` : wt.prunable !== null ? `prunable: ${wt.prunable}` : '';
+  const list = s.diffLists.get(listKey(sel.path, s.tab));
+  const notice = worktreeNotice(s, p, e, list);
+  const files = notice && !list ? [] : (list?.files ?? []);
+  const cur = currentFile(s, list);
+  const patch = cur ? s.diffPatches.get(patchKey(sel.path, s.tab, cur.path)) : undefined;
+  const wtList = s.diffLists.get(listKey(sel.path, 'workingTree')), brList = s.diffLists.get(listKey(sel.path, 'branch'));
+  const tabCount = (t: DiffTab) => (t === 'workingTree' ? (e.error || e.status === null ? '' : wtList ? String(wtList.files.length) : '…') : (wt.primary || wt.merged === true ? '0' : brList ? String(brList.files.length) : '…'));
+  const tab = (t: DiffTab, label: string) => h('div', { class: `tab ${s.tab === t ? 'on' : ''}`, onClick: () => hs.setTab(t) }, [label, h('span', { class: 'mono cnt muted' }, [tabCount(t)])]);
+  const groups: [string, DiffFile[]][] = s.tab === 'workingTree'
+    ? [['Staged', files.filter((f) => f.staged)], ['Unstaged', files.filter((f) => !f.staged && f.change !== 'untracked')], ['Untracked', files.filter((f) => f.change === 'untracked')]]
+    : [['Files', files]];
+  const fileRows: HTMLElement[] = [];
+  for (const [name, fs] of groups) {
+    if (!fs.length) continue;
+    fileRows.push(h('div', { class: 'file head', 'data-sel': '-' }, [`${name.toUpperCase()} · ${fs.length}`]));
+    for (const f of fs) {
+      const cut = f.path.lastIndexOf('/') + 1;
+      const inert = f.change === 'untracked';
+      fileRows.push(h('div', { class: `file ${inert ? 'inert' : ''}`, 'data-sel': cur?.path === f.path ? '1' : '0', title: inert ? `${f.path}\nuntracked — git has no diff for it` : f.oldPath ? `${f.oldPath} → ${f.path}` : f.path,
+        onClick: inert ? undefined : () => hs.pickFile(f.path) }, [
+        h('span', { class: `kind ${KIND[f.change][1]}` }, [KIND[f.change][0]]),
+        h('span', { class: 'dir ellipsis' }, [f.path.slice(0, cut)]),
+        h('span', { class: 'base ellipsis' }, [f.path.slice(cut)]),
+        inert ? null : f.binary ? h('span', { class: 'counts muted' }, ['binary']) : h('span', { class: 'counts' }, [h('span', { class: 'add-fg' }, [`+${f.added}`]), ' ', h('span', { class: 'del-fg' }, [`-${f.deleted}`])]),
+      ]));
+    }
+  }
+  if (list?.truncated) fileRows.push(h('div', { class: 'file head', 'data-sel': '-' }, [`list truncated at ${files.length} files`]));
+  const tA = files.reduce((n, f) => n + f.added, 0), tD = files.reduce((n, f) => n + f.deleted, 0);
+  const diffRows = patch ? patchRows(patch).map((l) => h('div', { class: `dline ${l.kind}` }, [h('span', { class: 'n' }, [l.n1]), h('span', { class: 'n' }, [l.n2]), h('span', { class: 'sign' }, [l.sign]), h('span', { class: 'text' }, [l.text])])) : [];
+  if (patch?.truncated) diffRows.push(h('div', { class: 'dline hunk' }, [h('span', { class: 'n' }), h('span', { class: 'n' }), h('span', { class: 'sign' }), h('span', { class: 'text' }, ['… patch truncated'])]));
+  const diffNotice = notice || (cur && cur.binary ? 'Binary file — no textual diff.' : cur && !patch ? (s.diffLoading ? 'Loading…' : '') : '');
+  main.replaceChildren(
+    h('div', { class: 'whead' }, [
+      h('span', { class: 'muted big' }, [p.project.name]), h('span', { class: 'faint big' }, ['/']),
+      h('span', { class: `mono big ${c.wtClass}` }, [c.wtLabel]),
+      ...c.badges.map((b) => h('span', { class: 'badge' }, [b])),
+      h('span', { class: 'mono muted ellipsis grow' }, [wt.path]),
+      h('span', { class: 'mono' }, [h('span', { class: 'muted' }, ['HEAD ']), wt.head.slice(0, 8)]),
+    ]),
+    h('div', { class: 'strip mono' }, [
+      h('span', {}, [h('span', { class: 'muted' }, ['changes ']), h('span', { class: c.changesClass }, [c.changes])]),
+      h('span', {}, [h('span', { class: 'muted' }, ['upstream ']), h('span', { class: c.upClass }, [c.upName])]),
+      h('span', {}, [h('span', { class: 'muted' }, ['merged ']), h('span', { class: c.mergedClass }, [c.merged])]),
+      h('span', { title: c.lastAbs }, [h('span', { class: 'muted' }, ['last commit ']), h('span', { class: c.lastClass }, [c.last])]),
+      extra ? h('span', { class: `ellipsis grow ${e.error ? 'c-err' : 'muted'}`, title: extra }, [extra]) : null,
+    ]),
+    h('div', { class: 'tabs' }, [tab('workingTree', 'Working tree'), tab('branch', `vs ${mainRef}`), h('div', { class: 'spacer' }), h('div', { class: 'mono muted' }, [files.length ? `${files.length} files · +${tA} -${tD}` : ''])]),
+    h('div', { class: 'split' }, [
+      h('div', { class: 'files' }, fileRows),
+      h('div', { class: 'diff' }, diffNotice ? [h('div', { class: 'empty center' }, [diffNotice])] : [
+        h('div', { class: 'dhead mono' }, [h('span', { class: 'ellipsis grow' }, [cur?.path ?? '']), h('span', { class: 'muted' }, [s.tab === 'workingTree' ? (cur?.staged ? 'staged' : 'unstaged') : `vs ${mainRef}`]), h('span', { class: 'add-fg' }, [`+${cur?.added ?? 0}`]), h('span', { class: 'del-fg' }, [`-${cur?.deleted ?? 0}`])]),
+        h('div', { class: 'dbody mono' }, diffRows),
+      ]),
+    ]),
+  );
 }
