@@ -90,3 +90,45 @@ async fn file_cap_truncates() {
     assert!(l.truncated);
     drop(t);
 }
+
+#[test]
+fn untracked_patch_reads_a_file_as_added_lines() {
+    let (_t, wt, _) = setup();
+    let p = untracked_patch(&wt, "new.txt", 5000).unwrap();
+    assert_eq!(p.path, "new.txt");
+    assert!(!p.binary && !p.truncated);
+    assert_eq!(p.hunks.len(), 1);
+    assert_eq!(p.hunks[0].header, "@@ -0,0 +1,1 @@");
+    assert_eq!(p.hunks[0].lines, vec![DiffLine { sign: '+', text: "n".to_string() }]);
+}
+
+#[test]
+fn untracked_patch_truncates_at_max_lines() {
+    let (_t, wt, _) = setup();
+    std::fs::write(wt.join("many.txt"), "a\nb\nc\nd\ne\n").unwrap();
+    let p = untracked_patch(&wt, "many.txt", 3).unwrap();
+    assert!(p.truncated);
+    assert_eq!(p.hunks[0].lines.len(), 3);
+}
+
+#[test]
+fn untracked_patch_marks_binary_files() {
+    let (_t, wt, _) = setup();
+    std::fs::write(wt.join("blob.bin"), [1u8, 0, 2]).unwrap();
+    let p = untracked_patch(&wt, "blob.bin", 5000).unwrap();
+    assert!(p.binary);
+    assert!(p.hunks.is_empty());
+}
+
+#[test]
+fn untracked_patch_rejects_missing_and_escaping_paths() {
+    let (t, wt, _) = setup();
+    assert!(untracked_patch(&wt, "gone.txt", 5000).is_err());
+    assert!(untracked_patch(&wt, "../escape.txt", 5000).is_err());
+    assert!(untracked_patch(&wt, "/etc/hosts", 5000).is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(t.root.join("README.md"), wt.join("link.txt")).unwrap();
+        assert!(untracked_patch(&wt, "link.txt", 5000).is_err());
+    }
+}

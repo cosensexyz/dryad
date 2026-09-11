@@ -3,7 +3,7 @@ import { patchRows } from '../diffview';
 
 describe('patchRows', () => {
   it('numbers old and new sides independently and keeps hunk headers', () => {
-    const rows = patchRows({ path: 'x', truncated: false, hunks: [
+    const rows = patchRows({ path: 'x', truncated: false, binary: false, hunks: [
       { header: '@@ -18,3 +18,4 @@ impl', oldStart: 18, newStart: 18, lines: [
         { sign: ' ', text: 'a' }, { sign: '-', text: 'b' }, { sign: '+', text: 'b2' }, { sign: '+', text: 'c' },
       ] },

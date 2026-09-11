@@ -15,6 +15,7 @@ export interface State {
   chips: { dirty: boolean; unpushed: boolean; merged: boolean; stale: boolean };
   sort: { key: SortKey; dir: 1 | -1 };
   staleDays: number;
+  paneWidths: { sidebar: number; files: number };
   tab: DiffTab; fileByTab: { workingTree: string | null; branch: string | null };
   /** Diff cache keyed by `${worktree}|${tab}` (lists) and `${worktree}|${tab}|${path}` (patches); cleared on scan:started. */
   diffLists: Map<string, { files: DiffFile[]; truncated: boolean }>;
@@ -36,6 +37,7 @@ export function createState(): State {
     expanded: new Set(), query: '',
     chips: { dirty: false, unpushed: false, merged: false, stale: false },
     sort: { key: 'project', dir: 1 }, staleDays: 30,
+    paneWidths: { sidebar: 260, files: 280 },
     tab: 'workingTree', fileByTab: { workingTree: null, branch: null },
     diffLists: new Map(), diffPatches: new Map(),
     diffSeq: 0, diffLoading: false, diffError: null,

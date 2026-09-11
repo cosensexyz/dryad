@@ -50,7 +50,7 @@ async function loadPatch(seq: number) {
   if (!e || !p || !cur || cur.binary) return;
   const key = patchKey(sel.path, tab, cur.path);
   if (s.diffPatches.has(key)) return;
-  const patch = await api.diffPatch({ project: sel.project, worktree: sel.path, head: e.wt.head, tab, mainRef: p.project.mainRef, path: cur.path, oldPath: cur.oldPath, staged: cur.staged });
+  const patch = await api.diffPatch({ project: sel.project, worktree: sel.path, head: e.wt.head, tab, mainRef: p.project.mainRef, path: cur.path, oldPath: cur.oldPath, staged: cur.staged, untracked: cur.change === 'untracked' });
   if (seq !== s.diffSeq) return;
   s.diffPatches.set(key, patch);
 }
@@ -90,12 +90,17 @@ const handlers = {
     try { s.staleDays = await api.setStaleDays(Math.max(1, Math.floor(n))); } catch (err) { flash(String(err)); }
     render();
   },
+  setPaneWidths(w: { sidebar: number; files: number }) {
+    s.paneWidths = w; render();
+    void api.setPaneWidths(w).catch((err) => flash(String(err)));
+  },
 };
 
 async function boot() {
   view = mount(root, handlers);
   const info = await api.startupInfo();
   s.gitError = info.gitError; s.registryWarning = info.registryWarning; s.staleDays = info.staleDays;
+  s.paneWidths = { sidebar: info.sidebarWidth, files: info.filesWidth };
   await reloadProjects();
   await onScanEvents((name, payload) => {
     if (!applyScanEvent(s, name, payload)) return;

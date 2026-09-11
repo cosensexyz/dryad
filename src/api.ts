@@ -14,9 +14,10 @@ export const api = {
   worktreeStatusNow: (project: string, path: string) => invoke<WorktreeStatus>('worktree_status_now', { project, path }),
   diffFiles: (a: { project: string; worktree: string; head: string; tab: DiffTab; mainRef: string | null; untracked: string[] }) =>
     invoke<{ files: DiffFile[]; truncated: boolean }>('diff_files', a),
-  diffPatch: (a: { project: string; worktree: string; head: string; tab: DiffTab; mainRef: string | null; path: string; oldPath: string | null; staged: boolean }) =>
+  diffPatch: (a: { project: string; worktree: string; head: string; tab: DiffTab; mainRef: string | null; path: string; oldPath: string | null; staged: boolean; untracked: boolean }) =>
     invoke<Patch>('diff_patch', a),
   setStaleDays: (days: number) => invoke<number>('set_stale_days', { days }),
+  setPaneWidths: (a: { sidebar: number; files: number }) => invoke<void>('set_pane_widths', a),
 };
 
 export async function onScanEvents(handler: (name: ScanEventName, payload: unknown) => void): Promise<() => void> {

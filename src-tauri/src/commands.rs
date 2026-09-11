@@ -28,7 +28,7 @@ impl EventSink for AppHandle {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartupInfo { pub git_error: Option<String>, pub registry_warning: Option<String>, pub stale_days: u32 }
+pub struct StartupInfo { pub git_error: Option<String>, pub registry_warning: Option<String>, pub stale_days: u32, pub sidebar_width: u32, pub files_width: u32 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,10 +51,13 @@ async fn ensure_worktree(state: &AppState, project: &str, worktree: &str) -> Res
 
 #[tauri::command]
 pub async fn startup_info(state: State<'_, AppState>) -> Result<StartupInfo, String> {
+    let s = state.settings.lock().unwrap();
     Ok(StartupInfo {
         git_error: state.git_error.clone(),
         registry_warning: state.registry_warning.clone(),
-        stale_days: state.settings.lock().unwrap().stale_days,
+        stale_days: s.stale_days,
+        sidebar_width: s.sidebar_width,
+        files_width: s.files_width,
     })
 }
 
@@ -116,9 +119,12 @@ pub async fn diff_files(state: State<'_, AppState>, project: String, worktree: S
 
 #[tauri::command]
 pub async fn diff_patch(state: State<'_, AppState>, project: String, worktree: String, head: String, tab: DiffTab,
-                        main_ref: Option<String>, path: String, old_path: Option<String>, staged: bool) -> Result<Patch, String> {
+                        main_ref: Option<String>, path: String, old_path: Option<String>, staged: bool, untracked: bool) -> Result<Patch, String> {
     let primary = ensure_worktree(&state, &project, &worktree).await?;
     let max = state.settings.lock().unwrap().patch_max_lines;
+    if untracked && tab == DiffTab::WorkingTree {
+        return differ::untracked_patch(Path::new(&worktree), &path, max).map_err(|e| e.to_string());
+    }
     match tab {
         DiffTab::WorkingTree => differ::working_tree_patch(&state.git, Path::new(&worktree), &path, old_path.as_deref(), staged, max).await,
         DiffTab::Branch => {
@@ -134,4 +140,11 @@ pub async fn set_stale_days(state: State<'_, AppState>, days: u32) -> Result<u32
     s.stale_days = days.max(1);
     s.save(&state.settings_file).map_err(|e| e.to_string())?;
     Ok(s.stale_days)
+}
+
+#[tauri::command]
+pub async fn set_pane_widths(state: State<'_, AppState>, sidebar: u32, files: u32) -> Result<(), String> {
+    let mut s = state.settings.lock().unwrap();
+    s.set_pane_widths(sidebar, files);
+    s.save(&state.settings_file).map_err(|e| e.to_string())
 }

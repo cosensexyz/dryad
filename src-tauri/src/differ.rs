@@ -3,7 +3,8 @@
 use crate::git::{parse, Git, GitError};
 use crate::model::*;
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Component, Path};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiffError {
@@ -65,7 +66,7 @@ async fn patch(git: &Git, dir: &Path, scope: &[&str], path: &str, old_path: Opti
     if let Some(o) = old_path { a.push(o); }
     let text = String::from_utf8_lossy(&git.run_ok(dir, &a).await?).into_owned();
     let (hunks, truncated) = parse::parse_patch(&text, max_lines);
-    Ok(Patch { path: path.to_string(), hunks, truncated })
+    Ok(Patch { path: path.to_string(), hunks, truncated, binary: false })
 }
 
 pub async fn working_tree_patch(git: &Git, wt: &Path, path: &str, old_path: Option<&str>, staged: bool, max_lines: usize) -> Result<Patch, DiffError> {
@@ -76,4 +77,37 @@ pub async fn working_tree_patch(git: &Git, wt: &Path, path: &str, old_path: Opti
 pub async fn branch_patch(git: &Git, primary: &Path, main_ref: &str, head: &str, path: &str, old_path: Option<&str>, max_lines: usize) -> Result<Patch, DiffError> {
     let range = format!("{main_ref}...{head}");
     patch(git, primary, &[range.as_str()], path, old_path, max_lines).await
+}
+
+/// Untracked files have no git diff: read the worktree file and render its lines as additions.
+pub fn untracked_patch(wt: &Path, path: &str, max_lines: usize) -> Result<Patch, DiffError> {
+    const MAX_BYTES: u64 = 1 << 20;
+    let rel = Path::new(path);
+    if rel.is_absolute() || rel.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(DiffError::Unavailable(format!("path outside the worktree: {path}")));
+    }
+    let abs = wt.join(rel);
+    let meta = std::fs::symlink_metadata(&abs).map_err(|e| DiffError::Unavailable(e.to_string()))?;
+    if !meta.is_file() { return Err(DiffError::Unavailable(format!("not a regular file: {path}"))); }
+    let root = wt.canonicalize().map_err(|e| DiffError::Unavailable(e.to_string()))?;
+    let real = abs.canonicalize().map_err(|e| DiffError::Unavailable(e.to_string()))?;
+    if !real.starts_with(&root) { return Err(DiffError::Unavailable(format!("path outside the worktree: {path}"))); }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&real).map_err(|e| DiffError::Unavailable(e.to_string()))?
+        .take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| DiffError::Unavailable(e.to_string()))?;
+    let byte_truncated = bytes.len() as u64 > MAX_BYTES;
+    bytes.truncate(MAX_BYTES as usize);
+    if bytes.contains(&0) {
+        return Ok(Patch { path: path.to_string(), hunks: vec![], truncated: byte_truncated, binary: true });
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.lines().collect();
+    if byte_truncated && !text.ends_with('\n') { lines.pop(); }
+    let truncated = byte_truncated || lines.len() > max_lines;
+    lines.truncate(max_lines);
+    let hunks = if lines.is_empty() { vec![] } else {
+        vec![Hunk { header: format!("@@ -0,0 +1,{} @@", lines.len()), old_start: 0, new_start: 1,
+            lines: lines.into_iter().map(|t| DiffLine { sign: '+', text: t.to_string() }).collect() }]
+    };
+    Ok(Patch { path: path.to_string(), hunks, truncated, binary: false })
 }

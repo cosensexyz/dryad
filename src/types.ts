@@ -13,7 +13,7 @@ export type Change = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
 export interface DiffFile { path: string; oldPath: string | null; change: Change; staged: boolean; added: number; deleted: number; binary: boolean; }
 export interface DiffLine { sign: ' ' | '+' | '-'; text: string; }
 export interface Hunk { header: string; oldStart: number; newStart: number; lines: DiffLine[]; }
-export interface Patch { path: string; hunks: Hunk[]; truncated: boolean; }
+export interface Patch { path: string; hunks: Hunk[]; truncated: boolean; binary: boolean; }
 export type DiffTab = 'workingTree' | 'branch';
 
 /** Scan events emitted by the backend; every payload carries the scan generation. */
@@ -23,4 +23,4 @@ export interface ProjectFailed { generation: number; path: string; error: string
 export interface WorktreeStatusEvent { generation: number; project: string; path: string; status: WorktreeStatus; }
 export interface WorktreeFailed { generation: number; project: string; path: string; error: string; }
 export interface ScanFinished { generation: number; }
-export interface StartupInfo { gitError: string | null; registryWarning: string | null; staleDays: number; }
+export interface StartupInfo { gitError: string | null; registryWarning: string | null; staleDays: number; sidebarWidth: number; filesWidth: number; }

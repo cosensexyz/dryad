@@ -72,7 +72,7 @@ pub struct DiffLine { pub sign: char, pub text: String }
 pub struct Hunk { pub header: String, pub old_start: u32, pub new_start: u32, pub lines: Vec<DiffLine> }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Patch { pub path: String, pub hunks: Vec<Hunk>, pub truncated: bool }
+pub struct Patch { pub path: String, pub hunks: Vec<Hunk>, pub truncated: bool, pub binary: bool }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -32,7 +32,7 @@ describe('worktreeNotice', () => {
   it('working tree tab', () => {
     const s = { tab: 'workingTree', diffError: null, diffLoading: false } as any;
     expect(worktreeNotice(s, p, base.entry, { files: [], truncated: false })).toBe('No uncommitted changes.');
-    expect(worktreeNotice(s, p, base.entry, { files: [{ path: 'n', oldPath: null, change: 'untracked', staged: false, added: 0, deleted: 0, binary: false }], truncated: false })).toBe('Only untracked files — git has no diff for them.');
+    expect(worktreeNotice(s, p, base.entry, { files: [{ path: 'n', oldPath: null, change: 'untracked', staged: false, added: 0, deleted: 0, binary: false }], truncated: false })).toBe('');
     expect(worktreeNotice(s, p, { ...base.entry, status: null }, undefined)).toBe('Waiting for the scan to reach this worktree…');
     expect(worktreeNotice(s, p, { ...base.entry, error: 'gone' }, undefined)).toBe('Status unavailable: gone');
     expect(worktreeNotice({ ...s, diffLoading: true }, p, base.entry, undefined)).toBe('Loading…');
