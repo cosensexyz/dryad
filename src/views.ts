@@ -145,6 +145,8 @@ export function mount(root: HTMLElement, hs: Handlers) {
         chip('unpushed', 'unpushed', rows.filter(isUnpushed).length, 'Commits ahead of upstream, or no upstream at all'),
         chip('merged', 'merged', rows.filter(isMerged).length, 'Branch is an ancestor of the main ref (squash merges are not detected)'),
         chip('stale', `stale >${s.staleDays}d`, rows.filter((r) => isStale(r, s.staleDays, now)).length, 'Last commit older than the stale threshold'),
+        h('input', { type: 'number', class: 'stale mono', min: '1', max: '3650', value: String(s.staleDays), title: 'Stale threshold in days',
+          onChange: (e) => hs.setStaleDays(Number((e.target as HTMLInputElement).value)) }),
         h('div', { class: 'spacer' }),
         h('div', { class: 'mono muted' }, [`${filtered ? `showing ${shown.length} of ${wtCount} · ` : ''}${s.projects.size} projects · ${wtCount} worktrees`]),
       ]),
@@ -180,6 +182,7 @@ export function mount(root: HTMLElement, hs: Handlers) {
       else if (s.selection.kind === 'project') renderProject(s, now, s.selection.path);
       else renderWorktree(main, s, now, hs, s.selection);
     },
+    focusFilter() { input.focus(); input.select(); },
   };
 }
 

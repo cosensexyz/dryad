@@ -64,3 +64,4 @@ body { background: var(--bg); color: var(--fg); font: 12.5px/1.4 var(--sans); }
 .dline .sign { width: 16px; flex: none; text-align: center; user-select: none; } .dline .text { flex: 1 1 0; min-width: 0; white-space: pre; padding-right: 12px; }
 .dline.add { background: var(--add-bg); } .dline.add .sign { color: var(--add-fg); } .dline.del { background: var(--del-bg); } .dline.del .sign { color: var(--del-fg); }
 .dline.hunk { background: var(--hunk-bg); color: var(--muted); border-top: 1px solid var(--line); }
+.stale { width: 56px; height: 24px; border: 1px solid var(--line2); border-radius: 4px; background: var(--bg); color: var(--fg); padding: 0 6px; }
