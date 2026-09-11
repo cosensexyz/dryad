@@ -8,7 +8,13 @@ Read-only desktop viewer for every git worktree of every project you add: uncomm
 - Linux: `libwebkit2gtk-4.1-dev` and the packages listed in `.github/workflows/ci.yml` (Ubuntu 22.04+ / Debian 12+).
 - Windows: WebView2 runtime (bundled with Windows 10/11).
 
-    npm ci
-    npm run tauri dev        # run
-    npm test && cargo test --manifest-path src-tauri/Cargo.toml
-    npm run tauri build      # bundles under src-tauri/target/release/bundle/
+```sh
+npm ci
+npm run tauri dev        # run
+npm test && cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build      # bundles under src-tauri/target/release/bundle/
+```
+
+Using make (macOS/Linux): `make install` once, then `make dev`, `make check`,
+`make build`; `make help` lists every target. Windows contributors use the
+npm/cargo commands above directly.
