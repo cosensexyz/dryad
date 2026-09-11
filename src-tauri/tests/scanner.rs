@@ -87,3 +87,54 @@ async fn worktree_status_reports_counts_and_untracked_names() {
     assert_eq!(done.counts, Counts::default());
     assert!(done.untracked.is_empty());
 }
+
+use dryad_lib::scanner::{scan, RecordingSink};
+use std::sync::{Arc, Mutex};
+
+fn events(sink: &RecordingSink) -> Vec<(String, serde_json::Value)> { sink.0.lock().unwrap().clone() }
+
+#[tokio::test]
+async fn scan_streams_events_in_order_with_the_generation_tag() {
+    let s = scenario();
+    let sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
+    scan(Arc::new(git()), sink.clone(), 7, vec![s.t.root.to_string_lossy().into_owned()]).await;
+    let ev = events(&sink);
+    assert_eq!(ev.first().unwrap().0, "scan:started");
+    assert_eq!(ev.last().unwrap().0, "scan:finished");
+    assert!(ev.iter().all(|(_, p)| p["generation"] == 7));
+    let scanned = ev.iter().position(|(n, _)| n == "project:scanned").unwrap();
+    let first_status = ev.iter().position(|(n, _)| n == "worktree:status").unwrap();
+    assert!(scanned < first_status);
+    assert_eq!(ev.iter().filter(|(n, _)| n == "worktree:status").count(), 5);
+    assert_eq!(ev[0].1["total"], 1);
+    let feat = ev.iter().find(|(n, p)| n == "worktree:status" && p["path"].as_str().unwrap().ends_with("feat-a")).unwrap();
+    assert_eq!(feat.1["status"]["counts"]["unstaged"], 1);
+    let scanned = ev.iter().find(|(n, _)| n == "project:scanned").unwrap();
+    let feat_wt = scanned.1["worktrees"].as_array().unwrap().iter().find(|w| w["branch"] == "feat/a").unwrap();
+    assert_eq!(feat_wt["upstream"]["kind"], "tracking");
+    assert_eq!(feat_wt["upstream"]["ahead"], 1);
+}
+
+#[tokio::test]
+async fn failures_are_events_and_do_not_stop_the_rest() {
+    let s = scenario();
+    // delete one worktree directory: its status query fails, everything else must still arrive
+    std::fs::remove_dir_all(&s.gone).unwrap();
+    let sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
+    let missing = s.t.dir.path().join("does-not-exist").to_string_lossy().into_owned();
+    scan(Arc::new(git()), sink.clone(), 1, vec![missing.clone(), s.t.root.to_string_lossy().into_owned()]).await;
+    let ev = events(&sink);
+    let failed: Vec<_> = ev.iter().filter(|(n, _)| n == "project:failed").collect();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].1["path"], missing);
+    assert_eq!(ev.iter().filter(|(n, _)| n == "project:scanned").count(), 1);
+    assert_eq!(ev.iter().filter(|(n, _)| n == "worktree:failed").count(), 1);
+    assert_eq!(ev.iter().filter(|(n, _)| n == "worktree:status").count(), 4);
+    // the deleted worktree is still listed (prunable) with its reference-level data intact
+    let scanned = ev.iter().find(|(n, _)| n == "project:scanned").unwrap();
+    let gone = scanned.1["worktrees"].as_array().unwrap().iter().find(|w| w["branch"] == "gone").unwrap();
+    assert!(gone["prunable"].is_string());
+    assert_eq!(gone["merged"], false);
+    assert_eq!(gone["upstream"]["kind"], "gone", "reference-level data survives the missing directory");
+    assert_eq!(ev.last().unwrap().0, "scan:finished");
+}

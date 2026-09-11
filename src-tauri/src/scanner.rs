@@ -77,3 +77,66 @@ pub async fn worktree_status(git: &Git, wt: &Path) -> Result<WorktreeStatus, Git
     let s = parse::parse_status_v2(&out);
     Ok(WorktreeStatus { counts: s.counts, untracked: s.untracked })
 }
+
+use serde::Serialize;
+use std::sync::{Arc, Mutex};
+
+pub trait EventSink: Send + Sync {
+    fn emit(&self, event: &str, payload: serde_json::Value);
+}
+
+pub struct RecordingSink(pub Mutex<Vec<(String, serde_json::Value)>>);
+impl EventSink for RecordingSink {
+    fn emit(&self, event: &str, payload: serde_json::Value) { self.0.lock().unwrap().push((event.to_string(), payload)); }
+}
+
+pub const EV_STARTED: &str = "scan:started";
+pub const EV_PROJECT_SCANNED: &str = "project:scanned";
+pub const EV_PROJECT_FAILED: &str = "project:failed";
+pub const EV_WORKTREE_STATUS: &str = "worktree:status";
+pub const EV_WORKTREE_FAILED: &str = "worktree:failed";
+pub const EV_FINISHED: &str = "scan:finished";
+
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ScanStarted { pub generation: u64, pub total: usize }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ProjectScanned { pub generation: u64, pub project: Project, pub worktrees: Vec<Worktree> }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ProjectFailed { pub generation: u64, pub path: String, pub error: String }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct WorktreeStatusEvent { pub generation: u64, pub project: String, pub path: String, pub status: WorktreeStatus }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct WorktreeFailed { pub generation: u64, pub project: String, pub path: String, pub error: String }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ScanFinished { pub generation: u64 }
+
+fn emit<T: Serialize>(sink: &dyn EventSink, event: &str, payload: T) {
+    sink.emit(event, serde_json::to_value(payload).expect("event serializes"));
+}
+
+/// Scan every project in parallel; the Git semaphore bounds the number of live git processes.
+pub async fn scan(git: Arc<Git>, sink: Arc<dyn EventSink>, generation: u64, projects: Vec<String>) {
+    emit(&*sink, EV_STARTED, ScanStarted { generation, total: projects.len() });
+    let mut set = tokio::task::JoinSet::new();
+    for path in projects {
+        let (git, sink) = (git.clone(), sink.clone());
+        set.spawn(async move { scan_one(git, sink, generation, path).await });
+    }
+    while set.join_next().await.is_some() {}
+    emit(&*sink, EV_FINISHED, ScanFinished { generation });
+}
+
+async fn scan_one(git: Arc<Git>, sink: Arc<dyn EventSink>, generation: u64, path: String) {
+    let repo = Path::new(&path);
+    let r = match scan_repo(&git, repo).await {
+        Ok(r) => r,
+        Err(e) => { emit(&*sink, EV_PROJECT_FAILED, ProjectFailed { generation, path, error: e.to_string() }); return; }
+    };
+    let worktrees = r.worktrees.clone();
+    emit(&*sink, EV_PROJECT_SCANNED, ProjectScanned { generation, project: r.project, worktrees: r.worktrees });
+    let mut set = tokio::task::JoinSet::new();
+    for wt in worktrees {
+        let (git, sink, project) = (git.clone(), sink.clone(), path.clone());
+        set.spawn(async move {
+            match worktree_status(&git, Path::new(&wt.path)).await {
+                Ok(status) => emit(&*sink, EV_WORKTREE_STATUS, WorktreeStatusEvent { generation, project, path: wt.path, status }),
+                Err(e) => emit(&*sink, EV_WORKTREE_FAILED, WorktreeFailed { generation, project, path: wt.path, error: e.to_string() }),
+            }
+        });
+    }
+    while set.join_next().await.is_some() {}
+}
