@@ -1,5 +1,7 @@
 //! Pure parsers for the git output formats Dryad reads. No I/O here.
 
+use crate::model::Counts;
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WorktreeEntry {
     pub path: String,
@@ -34,6 +36,63 @@ pub fn parse_worktree_list(out: &[u8]) -> Vec<WorktreeEntry> {
     }
     if let Some(e) = cur.take() { entries.push(e); }
     entries
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct StatusParsed {
+    pub head: Option<String>,
+    pub upstream: Option<String>,
+    pub ab: Option<(u32, u32)>,
+    pub counts: Counts,
+    pub untracked: Vec<String>,
+}
+
+fn nul_records(out: &[u8]) -> Vec<String> {
+    out.split(|b| *b == 0)
+        .filter(|r| !r.is_empty())
+        .map(|r| String::from_utf8_lossy(r).into_owned())
+        .collect()
+}
+
+pub fn parse_status_v2(out: &[u8]) -> StatusParsed {
+    let recs = nul_records(out);
+    let mut s = StatusParsed::default();
+    let mut i = 0;
+    while i < recs.len() {
+        let r = &recs[i];
+        i += 1;
+        if let Some(h) = r.strip_prefix("# ") {
+            if let Some(v) = h.strip_prefix("branch.head ") {
+                s.head = if v == "(detached)" { None } else { Some(v.to_string()) };
+            } else if let Some(v) = h.strip_prefix("branch.upstream ") {
+                s.upstream = Some(v.to_string());
+            } else if let Some(v) = h.strip_prefix("branch.ab ") {
+                let mut it = v.split(' ');
+                let a = it.next().and_then(|t| t.trim_start_matches('+').parse().ok());
+                let b = it.next().and_then(|t| t.trim_start_matches('-').parse().ok());
+                if let (Some(a), Some(b)) = (a, b) { s.ab = Some((a, b)); }
+            }
+            continue;
+        }
+        let mut f = r.splitn(2, ' ');
+        let tag = f.next().unwrap_or("");
+        let rest = f.next().unwrap_or("");
+        match tag {
+            "1" | "2" | "u" => {
+                let xy = rest.get(0..2).unwrap_or("..").as_bytes();
+                if tag == "u" {
+                    s.counts.unstaged += 1;
+                } else {
+                    if xy[0] != b'.' { s.counts.staged += 1; }
+                    if xy[1] != b'.' { s.counts.unstaged += 1; }
+                }
+                if tag == "2" { i += 1; } // the original path is its own NUL-terminated record
+            }
+            "?" => { s.counts.untracked += 1; s.untracked.push(rest.to_string()); }
+            _ => {} // "!" ignored entries and anything unknown
+        }
+    }
+    s
 }
 
 #[cfg(test)]
@@ -74,5 +133,57 @@ worktree /bare.git\nHEAD 0000000000000000000000000000000000000000\nbare\n\n";
         let v = parse_worktree_list(&raw);
         assert_eq!(v.len(), 1);
         assert!(v[0].path.starts_with("/caf\u{e9}"));
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    fn z(records: &[&str]) -> Vec<u8> {
+        let mut v = Vec::new();
+        for r in records { v.extend_from_slice(r.as_bytes()); v.push(0); }
+        v
+    }
+
+    #[test]
+    fn counts_staged_unstaged_untracked_and_reads_branch_headers() {
+        let out = z(&[
+            "# branch.oid 4da51ed9",
+            "# branch.head iodc-endpoint-url",
+            "# branch.upstream origin/iodc-endpoint-url",
+            "# branch.ab +3 -0",
+            "1 M. N... 100644 100644 100644 aaa bbb internal/network/endpoint.go",   // staged only
+            "1 .M N... 100644 100644 100644 aaa aaa SPEC/connector-module.md",       // unstaged only
+            "1 MM N... 100644 100644 100644 aaa bbb internal/config/config.go",      // both
+            "2 R. N... 100644 100644 100644 aaa aaa R100 new/name.go", "old/name.go", // rename, staged; orig path record
+            "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.txt",        // unmerged -> unstaged
+            "? notes/todo.md",
+            "! target/",
+        ]);
+        let s = parse_status_v2(&out);
+        assert_eq!(s.head.as_deref(), Some("iodc-endpoint-url"));
+        assert_eq!(s.upstream.as_deref(), Some("origin/iodc-endpoint-url"));
+        assert_eq!(s.ab, Some((3, 0)));
+        assert_eq!(s.counts, Counts { staged: 3, unstaged: 3, untracked: 1 });
+        assert_eq!(s.untracked, vec!["notes/todo.md".to_string()]);
+    }
+
+    #[test]
+    fn upstream_without_ab_means_gone_and_detached_head_is_none() {
+        let out = z(&["# branch.oid 9f3a1c2e", "# branch.head (detached)", "# branch.upstream origin/feat/ui"]);
+        let s = parse_status_v2(&out);
+        assert_eq!(s.head, None);
+        assert_eq!(s.upstream.as_deref(), Some("origin/feat/ui"));
+        assert_eq!(s.ab, None);
+        assert_eq!(s.counts, Counts::default());
+    }
+
+    #[test]
+    fn no_upstream_and_empty_status() {
+        let s = parse_status_v2(&z(&["# branch.oid c3f3fd74", "# branch.head simplify-merge-gate"]));
+        assert_eq!(s.upstream, None);
+        assert_eq!(s.ab, None);
+        assert!(s.untracked.is_empty());
     }
 }
