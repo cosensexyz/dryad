@@ -97,7 +97,7 @@ fn events(sink: &RecordingSink) -> Vec<(String, serde_json::Value)> { sink.0.loc
 async fn scan_streams_events_in_order_with_the_generation_tag() {
     let s = scenario();
     let sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
-    scan(Arc::new(git()), sink.clone(), 7, vec![s.t.root.to_string_lossy().into_owned()]).await;
+    scan(Arc::new(git()), sink.clone(), 7, vec![s.t.root.to_string_lossy().into_owned()], true).await;
     let ev = events(&sink);
     assert_eq!(ev.first().unwrap().0, "scan:started");
     assert_eq!(ev.last().unwrap().0, "scan:finished");
@@ -122,7 +122,7 @@ async fn failures_are_events_and_do_not_stop_the_rest() {
     std::fs::remove_dir_all(&s.gone).unwrap();
     let sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
     let missing = s.t.dir.path().join("does-not-exist").to_string_lossy().into_owned();
-    scan(Arc::new(git()), sink.clone(), 1, vec![missing.clone(), s.t.root.to_string_lossy().into_owned()]).await;
+    scan(Arc::new(git()), sink.clone(), 1, vec![missing.clone(), s.t.root.to_string_lossy().into_owned()], true).await;
     let ev = events(&sink);
     let failed: Vec<_> = ev.iter().filter(|(n, _)| n == "project:failed").collect();
     assert_eq!(failed.len(), 1);

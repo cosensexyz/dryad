@@ -97,7 +97,7 @@ pub const EV_WORKTREE_STATUS: &str = "worktree:status";
 pub const EV_WORKTREE_FAILED: &str = "worktree:failed";
 pub const EV_FINISHED: &str = "scan:finished";
 
-#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ScanStarted { pub generation: u64, pub total: usize }
+#[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ScanStarted { pub generation: u64, pub total: usize, pub full: bool }
 #[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ProjectScanned { pub generation: u64, pub project: Project, pub worktrees: Vec<Worktree> }
 #[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct ProjectFailed { pub generation: u64, pub path: String, pub error: String }
 #[derive(Serialize)] #[serde(rename_all = "camelCase")] pub struct WorktreeStatusEvent { pub generation: u64, pub project: String, pub path: String, pub status: WorktreeStatus }
@@ -109,8 +109,8 @@ fn emit<T: Serialize>(sink: &dyn EventSink, event: &str, payload: T) {
 }
 
 /// Scan every project in parallel; the Git semaphore bounds the number of live git processes.
-pub async fn scan(git: Arc<Git>, sink: Arc<dyn EventSink>, generation: u64, projects: Vec<String>) {
-    emit(&*sink, EV_STARTED, ScanStarted { generation, total: projects.len() });
+pub async fn scan(git: Arc<Git>, sink: Arc<dyn EventSink>, generation: u64, projects: Vec<String>, full: bool) {
+    emit(&*sink, EV_STARTED, ScanStarted { generation, total: projects.len(), full });
     let mut set = tokio::task::JoinSet::new();
     for path in projects {
         let (git, sink) = (git.clone(), sink.clone());
