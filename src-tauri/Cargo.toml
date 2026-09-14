@@ -27,6 +27,7 @@ thiserror = "2"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 
 [dev-dependencies]
+dunce = "1"
 tempfile = "3"
 
 

@@ -11,7 +11,7 @@ pub struct TempRepo {
 impl TempRepo {
     pub fn new() -> TempRepo {
         let dir = tempfile::tempdir().unwrap();
-        let base = dir.path().canonicalize().unwrap();
+        let base = dunce::canonicalize(dir.path()).unwrap();
         let root = base.join("repo");
         let origin = base.join("origin.git");
         std::fs::create_dir_all(&root).unwrap();

@@ -680,6 +680,7 @@ dependencies = [
 name = "dryad"
 version = "0.2.1"
 dependencies = [
+ "dunce",
  "fix-path-env",
  "serde",
  "serde_json",
