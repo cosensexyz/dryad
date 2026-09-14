@@ -8,7 +8,7 @@ CARGO ?= cargo
 CARGO_TEST = $(CARGO) test --manifest-path src-tauri/Cargo.toml
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev build test typecheck check clean
+.PHONY: help install dev build test typecheck version-check check clean
 
 help: ## Show this help
 	@awk -F':.*## ' '/^[a-z-]+:.*## /{printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -29,7 +29,10 @@ test: ## Run frontend and Rust tests
 typecheck: ## Type-check the frontend
 	$(NPX) tsc --noEmit
 
-check: test typecheck ## Run the command set of CI's test job
+version-check: ## Check app version consistency
+	$(NPM) run version:check
+
+check: version-check test typecheck ## Run the CI checks locally
 
 clean: ## Remove build outputs (keeps node_modules)
 	rm -rf dist src-tauri/target
