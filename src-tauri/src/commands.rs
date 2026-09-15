@@ -135,6 +135,20 @@ pub async fn diff_patch(state: State<'_, AppState>, project: String, worktree: S
 }
 
 #[tauri::command]
+pub async fn diff_context(state: State<'_, AppState>, project: String, worktree: String, head: String, tab: DiffTab,
+                          path: String, staged: bool, start: u32, count: Option<u32>) -> Result<ContextLines, String> {
+    let primary = ensure_worktree(&state, &project, &worktree).await?;
+    let max = state.settings.lock().unwrap().patch_max_lines;
+    match tab {
+        DiffTab::WorkingTree => {
+            let source = if staged { differ::ContextSource::Index } else { differ::ContextSource::Worktree };
+            differ::context_lines(&state.git, Path::new(&worktree), source, &path, start, count, max).await
+        }
+        DiffTab::Branch => differ::context_lines(&state.git, &primary, differ::ContextSource::Commit(&head), &path, start, count, max).await,
+    }.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn set_stale_days(state: State<'_, AppState>, days: u32) -> Result<u32, String> {
     let mut s = state.settings.lock().unwrap();
     s.stale_days = days.max(1);

@@ -179,13 +179,18 @@ pub fn parse_numstat(out: &[u8]) -> Vec<NumStat> {
 
 use crate::model::{DiffLine, Hunk};
 
-fn hunk_starts(header: &str) -> Option<(u32, u32)> {
+fn hunk_header(header: &str) -> Option<(u32, u32, u32, u32)> {
     // "@@ -a[,b] +c[,d] @@ ..."
     let body = header.strip_prefix("@@ -")?;
     let (old, rest) = body.split_once(" +")?;
     let (new, _) = rest.split_once(" @@")?;
-    let num = |s: &str| s.split(',').next().and_then(|n| n.parse::<u32>().ok());
-    Some((num(old)?, num(new)?))
+    let range = |s: &str| -> Option<(u32, u32)> {
+        let (start, count) = s.split_once(',').unwrap_or((s, "1"));
+        Some((start.parse().ok()?, count.parse().ok()?))
+    };
+    let (old_start, old_count) = range(old)?;
+    let (new_start, new_count) = range(new)?;
+    Some((old_start, old_count, new_start, new_count))
 }
 
 pub fn parse_patch(text: &str, max_lines: usize) -> (Vec<Hunk>, bool) {
@@ -193,8 +198,8 @@ pub fn parse_patch(text: &str, max_lines: usize) -> (Vec<Hunk>, bool) {
     let mut count = 0usize;
     for line in text.lines() {
         if line.starts_with("@@") {
-            let (old_start, new_start) = hunk_starts(line).unwrap_or((0, 0));
-            hunks.push(Hunk { header: line.to_string(), old_start, new_start, lines: Vec::new() });
+            let (old_start, old_count, new_start, new_count) = hunk_header(line).unwrap_or((0, 0, 0, 0));
+            hunks.push(Hunk { header: line.to_string(), old_start, old_count, new_start, new_count, lines: Vec::new() });
             continue;
         }
         if line.starts_with("diff --git") && !hunks.is_empty() { break; }
@@ -356,11 +361,22 @@ mod patch_tests {
         assert!(!trunc);
         assert_eq!(h.len(), 2);
         assert_eq!((h[0].old_start, h[0].new_start), (18, 18));
+        assert_eq!((h[0].old_count, h[0].new_count), (3, 4));
+        assert_eq!((h[1].old_count, h[1].new_count), (2, 1));
         assert_eq!(h[0].header, "@@ -18,3 +18,4 @@ impl Parser {");
         let signs: String = h[0].lines.iter().map(|l| l.sign).collect();
         assert_eq!(signs, " -++");
         assert_eq!(h[0].lines[2].text, "fn b2() {}");
         assert_eq!(h[1].lines.len(), 2); // the "\ No newline" marker is dropped
+    }
+
+    #[test]
+    fn parses_hunk_counts_with_defaults() {
+        assert_eq!(hunk_header("@@ -18,3 +18,4 @@ impl Parser {"), Some((18, 3, 18, 4)));
+        assert_eq!(hunk_header("@@ -5 +5 @@"), Some((5, 1, 5, 1)));
+        assert_eq!(hunk_header("@@ -0,0 +1,3 @@"), Some((0, 0, 1, 3)));
+        assert_eq!(hunk_header("@@ -1,3 +0,0 @@"), Some((1, 3, 0, 0)));
+        assert_eq!(hunk_header("not a header"), None);
     }
 
     #[test]

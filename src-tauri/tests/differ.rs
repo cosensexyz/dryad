@@ -132,3 +132,55 @@ fn untracked_patch_rejects_missing_and_escaping_paths() {
         assert!(untracked_patch(&wt, "link.txt", 5000).is_err());
     }
 }
+
+#[tokio::test]
+async fn context_lines_read_worktree_index_and_commit_sides() {
+    let (t, wt, _) = setup();
+    let content: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    let head = t.commit(&wt, "long.txt", &content, "long", None);
+    let g = git();
+    let c = context_lines(&g, &t.root, ContextSource::Commit(&head), "long.txt", 1, Some(4), 5000).await.unwrap();
+    assert_eq!(c.lines, vec!["line 1", "line 2", "line 3", "line 4"]);
+    assert_eq!(c.total, 30);
+    // staged change, then a further worktree change: the index wins for a staged diff
+    let staged: String = (1..=30).map(|i| format!("staged {i}\n")).collect();
+    std::fs::write(wt.join("long.txt"), &staged).unwrap();
+    t.git(&wt, &["add", "long.txt"]);
+    std::fs::write(wt.join("long.txt"), "worktree only\n".repeat(30)).unwrap();
+    let c = context_lines(&g, &wt, ContextSource::Index, "long.txt", 2, Some(2), 5000).await.unwrap();
+    assert_eq!(c.lines, vec!["staged 2", "staged 3"]);
+    // unstaged: the worktree file; renamed files are read by their new path
+    let c = context_lines(&g, &wt, ContextSource::Worktree, "long.txt", 1, Some(1), 5000).await.unwrap();
+    assert_eq!(c.lines, vec!["worktree only"]);
+    assert_eq!(c.total, 30);
+    t.git(&wt, &["mv", "long.txt", "renamed.txt"]);
+    let c = context_lines(&g, &wt, ContextSource::Index, "renamed.txt", 29, Some(3), 5000).await.unwrap();
+    assert_eq!(c.lines, vec!["staged 29", "staged 30"]);
+}
+
+#[tokio::test]
+async fn context_lines_stop_at_eof_and_respect_the_single_response_cap() {
+    let (t, wt, _) = setup();
+    let content: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    let head = t.commit(&wt, "long.txt", &content, "long", None);
+    let g = git();
+    let c = context_lines(&g, &t.root, ContextSource::Commit(&head), "long.txt", 28, Some(10), 5000).await.unwrap();
+    assert_eq!(c.lines.len(), 3);
+    assert_eq!(c.total, 30);
+    let c = context_lines(&g, &t.root, ContextSource::Commit(&head), "long.txt", 1, Some(100), 5).await.unwrap();
+    assert_eq!(c.lines.len(), 5);
+    let c = context_lines(&g, &t.root, ContextSource::Commit(&head), "long.txt", 1, None, 7).await.unwrap();
+    assert_eq!(c.lines.len(), 7);
+}
+
+#[tokio::test]
+async fn context_lines_reject_escaping_missing_and_oversized_sources() {
+    let (_t, wt, _) = setup();
+    let g = git();
+    assert!(context_lines(&g, &wt, ContextSource::Worktree, "../escape.txt", 1, Some(1), 5000).await.is_err());
+    assert!(context_lines(&g, &wt, ContextSource::Worktree, "gone.txt", 1, Some(1), 5000).await.is_err());
+    assert!(context_lines(&g, &wt, ContextSource::Index, "/etc/hosts", 1, Some(1), 5000).await.is_err());
+    std::fs::write(wt.join("big.txt"), vec![b'a'; (MAX_CONTEXT_BYTES + 1) as usize]).unwrap();
+    let err = context_lines(&g, &wt, ContextSource::Worktree, "big.txt", 1, Some(1), 5000).await.unwrap_err();
+    assert!(err.to_string().contains("too large"));
+}

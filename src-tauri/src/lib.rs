@@ -36,7 +36,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::startup_info, commands::list_projects, commands::add_project, commands::remove_project,
             commands::scan_all, commands::worktree_status_now, commands::diff_files, commands::diff_patch,
-            commands::set_stale_days, commands::set_pane_widths,
+            commands::diff_context, commands::set_stale_days, commands::set_pane_widths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

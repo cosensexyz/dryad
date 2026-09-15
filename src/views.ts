@@ -1,12 +1,13 @@
 import type { DiffFile, DiffTab } from './types';
 import { listKey, patchKey, type ProjectEntry, type Selection, type SortKey, type State, type WorktreeEntry } from './state';
 import { absTime, chipsPass, compareRows, flattenTree, isDirty, isMerged, isStale, isUnpushed, matchesText, relTime, rowsOf, type Row } from './derive';
-import { patchRows } from './diffview';
+import { patchRows, type DiffRow } from './diffview';
 
 export interface Handlers {
   addProject(): void; refresh(): void; setQuery(q: string): void; toggleChip(k: keyof State['chips']): void;
   setSort(k: SortKey): void; select(sel: Selection): void; toggleExpand(project: string): void; removeProject(path: string): void;
   setTab(tab: DiffTab): void; pickFile(path: string): void; setStaleDays(n: number): void;
+  expandGap(gapId: number, dir: 'up' | 'down' | 'all'): void;
   setPaneWidths(w: { sidebar: number; files: number }): void;
 }
 
@@ -277,6 +278,22 @@ export function dragWidth(start: number, dx: number, container: number, min: num
   return Math.round(Math.min(max, Math.max(min, start + dx)));
 }
 
+function gapLine(l: DiffRow, hs: Handlers): HTMLElement {
+  const g = l.gap!;
+  const btn = (dir: 'up' | 'down' | 'all', label: string, show: boolean) => show
+    ? h('button', { class: 'gapbtn', disabled: g.pending ? '' : undefined, onClick: () => hs.expandGap(g.id, dir) }, [label])
+    : null;
+  return h('div', { class: 'dline gap' }, [
+    h('span', { class: 'n' }), h('span', { class: 'n' }), h('span', { class: 'sign' }),
+    h('span', { class: 'text gapbody' }, [
+      h('span', {}, [g.remaining === null ? '⋯' : `⋯ ${g.remaining} lines hidden`]),
+      btn('down', '↓ 20', g.canDown), btn('up', '↑ 20', g.canUp), btn('all', 'All', true),
+      g.pending ? h('span', {}, ['…']) : null,
+      g.error ? h('span', { class: 'c-err' }, [g.error]) : null,
+    ]),
+  ]);
+}
+
 export function renderWorktree(main: HTMLElement, s: State, now: number, hs: Handlers, sel: { project: string; path: string }, filesGutter: HTMLElement) {
   const p = s.projects.get(sel.project), e = s.worktrees.get(sel.path);
   if (!p || !e) { main.dataset.view = `${sel.path}|${s.tab}`; main.dataset.file = ''; main.replaceChildren(h('div', { class: 'empty' }, ['This worktree is no longer listed.'])); return; }
@@ -291,6 +308,7 @@ export function renderWorktree(main: HTMLElement, s: State, now: number, hs: Han
   main.dataset.view = `${sel.path}|${s.tab}`;
   main.dataset.file = cur?.path ?? '';
   const patch = cur ? s.diffPatches.get(patchKey(sel.path, s.tab, cur.path)) : undefined;
+  const contexts = cur ? s.diffContexts.get(patchKey(sel.path, s.tab, cur.path)) : undefined;
   const wtList = s.diffLists.get(listKey(sel.path, 'workingTree')), brList = s.diffLists.get(listKey(sel.path, 'branch'));
   const tabCount = (t: DiffTab) => (t === 'workingTree' ? (e.error || e.status === null ? '' : wtList ? String(wtList.files.length) : '…') : (wt.primary || wt.merged === true ? '0' : brList ? String(brList.files.length) : '…'));
   const tab = (t: DiffTab, label: string) => h('div', { class: `tab ${s.tab === t ? 'on' : ''}`, onClick: () => hs.setTab(t) }, [label, h('span', { class: 'mono cnt muted' }, [tabCount(t)])]);
@@ -314,7 +332,7 @@ export function renderWorktree(main: HTMLElement, s: State, now: number, hs: Han
   }
   if (list?.truncated) fileRows.push(h('div', { class: 'file head', 'data-sel': '-' }, [`list truncated at ${files.length} files`]));
   const tA = files.reduce((n, f) => n + f.added, 0), tD = files.reduce((n, f) => n + f.deleted, 0);
-  const diffRows = patch ? patchRows(patch).map((l) => h('div', { class: `dline ${l.kind}` }, [h('span', { class: 'n' }, [l.n1]), h('span', { class: 'n' }, [l.n2]), h('span', { class: 'sign' }, [l.sign]), h('span', { class: 'text' }, [l.text])])) : [];
+  const diffRows = patch ? patchRows(patch, contexts).map((l) => (l.kind === 'gap' ? gapLine(l, hs) : h('div', { class: `dline ${l.kind}` }, [h('span', { class: 'n' }, [l.n1]), h('span', { class: 'n' }, [l.n2]), h('span', { class: 'sign' }, [l.sign]), h('span', { class: 'text' }, [l.text])]))) : [];
   if (patch?.truncated) diffRows.push(h('div', { class: 'dline hunk' }, [h('span', { class: 'n' }), h('span', { class: 'n' }), h('span', { class: 'sign' }), h('span', { class: 'text' }, ['… patch truncated'])]));
   const binary = cur?.binary === true || patch?.binary === true;
   const diffNotice = notice || (binary ? 'Binary file — no textual diff.' : cur && !patch ? (s.diffLoading ? 'Loading…' : '') : '');

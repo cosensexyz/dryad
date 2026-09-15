@@ -79,9 +79,9 @@ pub async fn branch_patch(git: &Git, primary: &Path, main_ref: &str, head: &str,
     patch(git, primary, &[range.as_str()], path, old_path, max_lines).await
 }
 
-/// Untracked files have no git diff: read the worktree file and render its lines as additions.
-pub fn untracked_patch(wt: &Path, path: &str, max_lines: usize) -> Result<Patch, DiffError> {
-    const MAX_BYTES: u64 = 1 << 20;
+/// Read a worktree file with the untracked-patch safety checks; at most `max_bytes + 1` bytes
+/// so callers can tell whether the file was cut off.
+fn read_worktree_file(wt: &Path, path: &str, max_bytes: u64) -> Result<(Vec<u8>, bool), DiffError> {
     let rel = Path::new(path);
     if rel.is_absolute() || rel.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(DiffError::Unavailable(format!("path outside the worktree: {path}")));
@@ -94,9 +94,16 @@ pub fn untracked_patch(wt: &Path, path: &str, max_lines: usize) -> Result<Patch,
     if !real.starts_with(&root) { return Err(DiffError::Unavailable(format!("path outside the worktree: {path}"))); }
     let mut bytes = Vec::new();
     std::fs::File::open(&real).map_err(|e| DiffError::Unavailable(e.to_string()))?
-        .take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| DiffError::Unavailable(e.to_string()))?;
-    let byte_truncated = bytes.len() as u64 > MAX_BYTES;
-    bytes.truncate(MAX_BYTES as usize);
+        .take(max_bytes + 1).read_to_end(&mut bytes).map_err(|e| DiffError::Unavailable(e.to_string()))?;
+    let truncated = bytes.len() as u64 > max_bytes;
+    bytes.truncate(max_bytes as usize);
+    Ok((bytes, truncated))
+}
+
+/// Untracked files have no git diff: read the worktree file and render its lines as additions.
+pub fn untracked_patch(wt: &Path, path: &str, max_lines: usize) -> Result<Patch, DiffError> {
+    const MAX_BYTES: u64 = 1 << 20;
+    let (bytes, byte_truncated) = read_worktree_file(wt, path, MAX_BYTES)?;
     if bytes.contains(&0) {
         return Ok(Patch { path: path.to_string(), hunks: vec![], truncated: byte_truncated, binary: true });
     }
@@ -106,8 +113,54 @@ pub fn untracked_patch(wt: &Path, path: &str, max_lines: usize) -> Result<Patch,
     let truncated = byte_truncated || lines.len() > max_lines;
     lines.truncate(max_lines);
     let hunks = if lines.is_empty() { vec![] } else {
-        vec![Hunk { header: format!("@@ -0,0 +1,{} @@", lines.len()), old_start: 0, new_start: 1,
+        vec![Hunk { header: format!("@@ -0,0 +1,{} @@", lines.len()), old_start: 0, old_count: 0, new_start: 1, new_count: lines.len() as u32,
             lines: lines.into_iter().map(|t| DiffLine { sign: '+', text: t.to_string() }).collect() }]
     };
     Ok(Patch { path: path.to_string(), hunks, truncated, binary: false })
+}
+
+/// Gap lines are unchanged, so the new side alone supplies them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ContextSource<'a> {
+    /// The worktree file itself (unstaged changes).
+    Worktree,
+    /// The staged index blob (`:path`).
+    Index,
+    /// A blob in a commit (`rev:path`), e.g. the worktree HEAD for branch diffs.
+    Commit(&'a str),
+}
+
+pub const MAX_CONTEXT_BYTES: u64 = 8 << 20;
+
+fn relative(path: &str) -> bool {
+    let p = Path::new(path);
+    !p.is_absolute() && !p.components().any(|c| matches!(c, Component::ParentDir))
+}
+
+async fn blob_bytes(git: &Git, dir: &Path, spec: &str, max_bytes: u64) -> Result<Vec<u8>, DiffError> {
+    let size = String::from_utf8_lossy(&git.run_ok(dir, &["cat-file", "-s", spec]).await?)
+        .trim().parse::<u64>().map_err(|_| DiffError::Unavailable(format!("cannot size blob: {spec}")))?;
+    if size > max_bytes { return Err(DiffError::Unavailable(format!("file too large to expand context: {spec}"))); }
+    Ok(git.run_ok(dir, &["show", spec]).await?)
+}
+
+/// Read the requested 1-based line range of the new side, up to `max_lines` lines per response.
+pub async fn context_lines(git: &Git, dir: &Path, source: ContextSource<'_>, path: &str,
+                           start: u32, count: Option<u32>, max_lines: usize) -> Result<ContextLines, DiffError> {
+    if !relative(path) { return Err(DiffError::Unavailable(format!("path outside the worktree: {path}"))); }
+    let bytes = match source {
+        ContextSource::Worktree => {
+            let (bytes, truncated) = read_worktree_file(dir, path, MAX_CONTEXT_BYTES)?;
+            if truncated { return Err(DiffError::Unavailable(format!("file too large to expand context: {path}"))); }
+            bytes
+        }
+        ContextSource::Index => blob_bytes(git, dir, &format!(":{path}"), MAX_CONTEXT_BYTES).await?,
+        ContextSource::Commit(rev) => blob_bytes(git, dir, &format!("{rev}:{path}"), MAX_CONTEXT_BYTES).await?,
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let wanted = count.map(|c| c as usize).unwrap_or(max_lines).min(max_lines);
+    let from = (start.saturating_sub(1) as usize).min(lines.len());
+    let end = (from + wanted).min(lines.len());
+    Ok(ContextLines { lines: lines[from..end].iter().map(|s| s.to_string()).collect(), total: lines.len() as u32 })
 }

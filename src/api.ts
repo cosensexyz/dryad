@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { DiffFile, DiffTab, Patch, StartupInfo, WorktreeStatus } from './types';
+import type { ContextLines, DiffFile, DiffTab, Patch, StartupInfo, WorktreeStatus } from './types';
 
 export type ScanEventName = 'scan:started' | 'project:scanned' | 'project:failed' | 'worktree:status' | 'worktree:failed' | 'scan:finished';
 const SCAN_EVENTS: ScanEventName[] = ['scan:started', 'project:scanned', 'project:failed', 'worktree:status', 'worktree:failed', 'scan:finished'];
@@ -16,6 +16,8 @@ export const api = {
     invoke<{ files: DiffFile[]; truncated: boolean }>('diff_files', a),
   diffPatch: (a: { project: string; worktree: string; head: string; tab: DiffTab; mainRef: string | null; path: string; oldPath: string | null; staged: boolean; untracked: boolean }) =>
     invoke<Patch>('diff_patch', a),
+  diffContext: (a: { project: string; worktree: string; head: string; tab: DiffTab; path: string; staged: boolean; start: number; count: number | null }) =>
+    invoke<ContextLines>('diff_context', a),
   setStaleDays: (days: number) => invoke<number>('set_stale_days', { days }),
   setPaneWidths: (a: { sidebar: number; files: number }) => invoke<void>('set_pane_widths', a),
 };

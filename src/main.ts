@@ -2,6 +2,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { api, onScanEvents } from './api';
 import { applyScanEvent, createState, listKey, patchKey, select as selectState, setRegistered, type Selection } from './state';
 import { flattenTree } from './derive';
+import { gapRequest } from './diffview';
+import type { GapContext } from './types';
 import { currentFile, mount } from './views';
 
 const s = createState();
@@ -86,6 +88,39 @@ const handlers = {
   },
   setTab(tab: typeof s.tab) { s.tab = tab; render(); void loadDiff(); },
   pickFile(path: string) { s.fileByTab[s.tab] = path; render(); void loadDiff(); },
+  async expandGap(gapId: number, dir: 'up' | 'down' | 'all') {
+    if (s.selection.kind !== 'worktree') return;
+    const sel = s.selection, tab = s.tab;
+    const e = s.worktrees.get(sel.path), p = s.projects.get(sel.project);
+    const cur = currentFile(s, s.diffLists.get(listKey(sel.path, tab)));
+    if (!e || !p || !cur || cur.binary) return;
+    const key = patchKey(sel.path, tab, cur.path);
+    const patch = s.diffPatches.get(key);
+    if (!patch) return;
+    const contexts = s.diffContexts.get(key) ?? new Map<number, GapContext>();
+    const prev = contexts.get(gapId);
+    if (prev?.pending) return;
+    const req = gapRequest(patch, prev, gapId, dir);
+    if (!req) return;
+    const generation = s.generation;
+    contexts.set(gapId, { down: prev?.down ?? [], up: prev?.up ?? [], total: prev?.total ?? null, pending: dir, error: null });
+    s.diffContexts.set(key, contexts);
+    render();
+    try {
+      const r = await api.diffContext({ project: sel.project, worktree: sel.path, head: e.wt.head, tab, path: cur.path, staged: cur.staged, start: req.start, count: req.count });
+      if (s.generation !== generation) return;
+      const live = s.diffContexts.get(key)?.get(gapId);
+      if (!live || live.pending !== dir) return;
+      const next: GapContext = { ...live, total: r.total, pending: null, error: null };
+      if (dir === 'up') next.up = [...r.lines, ...live.up]; else next.down = [...live.down, ...r.lines];
+      s.diffContexts.get(key)!.set(gapId, next);
+    } catch (err) {
+      if (s.generation !== generation) return;
+      const live = s.diffContexts.get(key)?.get(gapId);
+      if (live && live.pending === dir) s.diffContexts.get(key)!.set(gapId, { ...live, pending: null, error: String(err) });
+    }
+    render();
+  },
   async setStaleDays(n: number) {
     try { s.staleDays = await api.setStaleDays(Math.max(1, Math.floor(n))); } catch (err) { flash(String(err)); }
     render();

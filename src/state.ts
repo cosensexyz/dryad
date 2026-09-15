@@ -1,4 +1,4 @@
-import type { DiffFile, DiffTab, Patch, Project, Worktree, WorktreeStatus } from './types';
+import type { DiffFile, DiffTab, GapContext, Patch, Project, Worktree, WorktreeStatus } from './types';
 import type { ScanEventName } from './api';
 
 export type Selection = { kind: 'root' } | { kind: 'project'; path: string } | { kind: 'worktree'; project: string; path: string };
@@ -20,6 +20,8 @@ export interface State {
   /** Diff cache keyed by `${worktree}|${tab}` (lists) and `${worktree}|${tab}|${path}` (patches); cleared on scan:started. */
   diffLists: Map<string, { files: DiffFile[]; truncated: boolean }>;
   diffPatches: Map<string, Patch>;
+  /** Expanded context per patch key and hidden-range id; cleared with the patches on scan:started. */
+  diffContexts: Map<string, Map<number, GapContext>>;
   diffSeq: number; diffLoading: boolean; diffError: string | null;
   gitError: string | null; registryWarning: string | null;
   /** Projects explicitly dropped by reconcile; late scan events for them are ignored until re-registered. */
@@ -39,7 +41,7 @@ export function createState(): State {
     sort: { key: 'project', dir: 1 }, staleDays: 30,
     paneWidths: { sidebar: 260, files: 280 },
     tab: 'workingTree', fileByTab: { workingTree: null, branch: null },
-    diffLists: new Map(), diffPatches: new Map(),
+    diffLists: new Map(), diffPatches: new Map(), diffContexts: new Map(),
     diffSeq: 0, diffLoading: false, diffError: null,
     gitError: null, registryWarning: null,
     removed: new Set(),
@@ -71,7 +73,7 @@ export function applyScanEvent(s: State, name: ScanEventName, payload: unknown):
   if (name === 'scan:started') {
     if (p.generation < s.generation) return false;
     s.generation = p.generation; s.scanning = true; s.total = p.total; s.finished = 0;
-    s.diffLists.clear(); s.diffPatches.clear();
+    s.diffLists.clear(); s.diffPatches.clear(); s.diffContexts.clear();
     if (p.full) { for (const e of s.projects.values()) { e.scan = 'pending'; e.error = null; } s.worktrees.clear(); }
     return true;
   }

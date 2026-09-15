@@ -180,6 +180,12 @@
                     <span style="width: 44px; flex: none; text-align: right; padding-right: 6px; color: var(--faint); user-select: none;">{{l.n2}}</span>
                     <span style="width: 16px; flex: none; text-align: center; color: {{l.signColor}}; user-select: none;">{{l.sign}}</span>
                     <span style="flex: 1 1 0; min-width: 0; white-space: pre; padding-right: 12px;">{{l.text}}</span>
+                    <span style="display: {{l.gapD}}; align-items: center; gap: 8px; color: var(--muted);">
+                      <span>{{l.label}}</span>
+                      <span onClick="{{l.downPick}}" style="display: {{l.downD}}; padding: 0 6px; border: 1px solid var(--line2); border-radius: 3px; color: var(--fg); background: var(--panel); cursor: pointer;">↓ 20</span>
+                      <span onClick="{{l.upPick}}" style="display: {{l.upD}}; padding: 0 6px; border: 1px solid var(--line2); border-radius: 3px; color: var(--fg); background: var(--panel); cursor: pointer;">↑ 20</span>
+                      <span onClick="{{l.allPick}}" style="display: {{l.allD}}; padding: 0 6px; border: 1px solid var(--line2); border-radius: 3px; color: var(--fg); background: var(--panel); cursor: pointer;">All</span>
+                    </span>
                   </div>
                 </sc-for>
               </div>
@@ -527,21 +533,59 @@ function diffFor(id, repo, wt) {
     branch: d ? d.branch : synthBranch(repo, wt),
   };
 }
-// Expand a file's hunks into unified-diff rows with old/new line numbers.
-function diffLines(file) {
+// A file's hunks with parsed line ranges.
+function hunksOf(file) {
+  const HH = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+  return file.hunks.map(hk => {
+    const m = HH.exec(hk.h);
+    const n = (v, d) => (v === undefined ? d : Number(v));
+    return { hk, os: m ? n(m[1], 0) : 0, oc: m ? n(m[2], 1) : 1, ns: m ? n(m[3], 0) : 0, nc: m ? n(m[4], 1) : 1 };
+  });
+}
+const CTX = (n) => '    // line ' + n; // synthesized context lines; the prototype has no file to read
+// Expand a file's hunks into rows. Hidden ranges render an expansion row unless empty or fully
+// revealed; `exp` holds the per-file reveal state (down/up line counts, tail total), `pick` asks
+// for more context.
+function diffLines(file, exp, pick) {
   const out = [];
-  for (const hk of file.hunks) {
-    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(hk.h);
-    let n1 = m ? Number(m[1]) : 1, n2 = m ? Number(m[2]) : 1;
-    // Background carries the state; line text stays in the normal colour and only the sign column is tinted.
-    out.push({ n1: '', n2: '', sign: '', text: hk.h, bg: 'var(--hunk-bg)', fg: 'var(--muted)', signColor: 'var(--muted)', bt: '1px solid var(--line)' });
-    for (const raw of hk.l) {
+  const hm = hunksOf(file);
+  const st = (id) => exp[id] || { down: 0, up: 0, tail: null };
+  const row = (n1, n2, sign, text, bg, fg, signColor, bt) => ({ n1, n2, sign, text, bg, fg, signColor, bt, gapD: 'none', label: '', upD: 'none', downD: 'none', allD: 'none', upPick: () => {}, downPick: () => {}, allPick: () => {} });
+  const ctx = (n1, n2) => out.push(row(String(n1), String(n2), '', CTX(n2), 'transparent', 'var(--fg)', 'var(--fg)', 'none'));
+  const gap = (id, oldStart, newStart, size) => {
+    const s = st(id);
+    const remaining = size === null ? null : size - s.up - s.down;
+    for (let i = 0; i < s.down; i++) ctx(oldStart + i, newStart + i);
+    if (remaining !== 0) {
+      const few = remaining !== null && remaining <= 20;
+      out.push({ ...row('', '', '', '', 'var(--hunk-bg)', 'var(--muted)', 'var(--muted)', '1px solid var(--line)'), gapD: 'inline-flex',
+        label: remaining === null ? '⋯' : '⋯ ' + remaining + ' lines hidden',
+        upD: few || size === null ? 'none' : 'inline', downD: few ? 'none' : 'inline', allD: 'inline',
+        upPick: () => pick(id, 'up', size, newStart), downPick: () => pick(id, 'down', size, newStart), allPick: () => pick(id, 'all', size, newStart) });
+    }
+    if (size !== null) for (let i = 0; i < s.up; i++) ctx(oldStart + size - s.up + i, newStart + size - s.up + i);
+  };
+  let oldLine = 1, newLine = 1;
+  hm.forEach((h, i) => {
+    const size = (h.os > 0 ? h.os : h.ns) - (h.os > 0 ? oldLine : newLine);
+    if (size > 0) gap(i, oldLine, newLine, size);
+    let n1 = h.os, n2 = h.ns;
+    out.push(row('', '', '', h.hk.h, 'var(--hunk-bg)', 'var(--muted)', 'var(--muted)', '1px solid var(--line)'));
+    for (const raw of h.hk.l) {
       const sign = raw[0] === '+' || raw[0] === '-' ? raw[0] : ' ';
       const text = raw.slice(1).replace(/\t/g, '    ');
-      if (sign === '+') { out.push({ n1: '', n2: String(n2++), sign: '+', text, bg: 'var(--add-bg)', fg: 'var(--fg)', signColor: 'var(--add-fg)', bt: 'none' }); }
-      else if (sign === '-') { out.push({ n1: String(n1++), n2: '', sign: '-', text, bg: 'var(--del-bg)', fg: 'var(--fg)', signColor: 'var(--del-fg)', bt: 'none' }); }
-      else { out.push({ n1: String(n1++), n2: String(n2++), sign: '', text, bg: 'transparent', fg: 'var(--fg)', signColor: 'var(--fg)', bt: 'none' }); }
+      if (sign === '+') out.push(row('', String(n2++), '+', text, 'var(--add-bg)', 'var(--fg)', 'var(--add-fg)', 'none'));
+      else if (sign === '-') out.push(row(String(n1++), '', '-', text, 'var(--del-bg)', 'var(--fg)', 'var(--del-fg)', 'none'));
+      else out.push(row(String(n1++), String(n2++), '', text, 'transparent', 'var(--fg)', 'var(--fg)', 'none'));
     }
+    oldLine = h.os + h.oc;
+    newLine = h.ns + h.nc;
+  });
+  const last = hm[hm.length - 1];
+  if (last && last.nc > 0) {
+    const s = st(hm.length);
+    const size = s.tail === null ? null : s.tail - newLine + 1;
+    if (size === null || size > 0) gap(hm.length, oldLine, newLine, size);
   }
   return out;
 }
@@ -565,6 +609,7 @@ class Component extends DCLogic {
       sort: { key: 'repo', dir: 1 },
       removed: [],
       scanning: true,
+      expand: {},
     };
     this._timer = null;
   }
@@ -586,6 +631,20 @@ class Component extends DCLogic {
       if (!this.state.expanded.includes(repoId)) patch.expanded = [...this.state.expanded, repoId];
     }
     this.setState(patch);
+  }
+
+  // Reveal more context in the prototype: no requests, just counts. The tail's length is
+  // unknown until the first pick, like the real app before its first request returns total.
+  pickContext(fileKey, id, dir, size, newStart) {
+    const k = fileKey + '|' + id;
+    const cur = this.state.expand[k] || { down: 0, up: 0, tail: null };
+    const s = { ...cur };
+    if (size === null && s.tail === null) s.tail = newStart + 11;
+    const total = size === null ? s.tail - newStart + 1 : size;
+    const remaining = total - s.up - s.down;
+    const n = dir === 'all' ? remaining : Math.min(20, remaining);
+    if (dir === 'up') s.up += n; else s.down += n;
+    this.setState({ expand: { ...this.state.expand, [k]: s } });
   }
 
   renderVals() {
@@ -867,7 +926,10 @@ class Component extends DCLogic {
         }
         const cur = selectable.find(f => f.path === curPath);
         if (cur) {
-          lines = diffLines(cur);
+          const fileKey = sel.id + '|' + tab + '|' + cur.path;
+          const exp = {};
+          for (const k in this.state.expand) if (k.startsWith(fileKey + '|')) exp[k.slice(fileKey.length + 1)] = this.state.expand[k];
+          lines = diffLines(cur, exp, (id, dir, size, newStart) => this.pickContext(fileKey, id, dir, size, newStart));
           diffHead = { path: cur.path, meta: tab === 'changes' ? (cur.staged ? 'staged' : 'unstaged') : 'vs ' + mainRef, add: '+' + cur.add, del: '-' + cur.del };
         }
         const tA = list.reduce((n, f) => n + f.add, 0), tD = list.reduce((n, f) => n + f.del, 0);

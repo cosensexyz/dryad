@@ -12,7 +12,9 @@ export interface WorktreeStatus { counts: Counts; untracked: string[]; }
 export type Change = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
 export interface DiffFile { path: string; oldPath: string | null; change: Change; staged: boolean; added: number; deleted: number; binary: boolean; }
 export interface DiffLine { sign: ' ' | '+' | '-'; text: string; }
-export interface Hunk { header: string; oldStart: number; newStart: number; lines: DiffLine[]; }
+export interface Hunk { header: string; oldStart: number; oldCount: number; newStart: number; newCount: number; lines: DiffLine[]; }
+export interface ContextLines { lines: string[]; total: number; }
+export interface GapContext { down: string[]; up: string[]; total: number | null; pending: 'up' | 'down' | 'all' | null; error: string | null; }
 export interface Patch { path: string; hunks: Hunk[]; truncated: boolean; binary: boolean; }
 export type DiffTab = 'workingTree' | 'branch';
 

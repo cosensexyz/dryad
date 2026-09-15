@@ -44,6 +44,17 @@ describe('scan event reduction', () => {
     expect(s.finished).toBe(1);
   });
 
+  it('clears diff caches when a scan starts', () => {
+    const s = createState();
+    s.diffLists.set('k', { files: [], truncated: false });
+    s.diffPatches.set('k', { path: 'x', hunks: [], truncated: false, binary: false });
+    s.diffContexts.set('k', new Map([[0, { down: ['a'], up: [], total: null, pending: null, error: null }]]));
+    applyScanEvent(s, 'scan:started', { generation: 1, total: 0, full: true });
+    expect(s.diffLists.size).toBe(0);
+    expect(s.diffPatches.size).toBe(0);
+    expect(s.diffContexts.size).toBe(0);
+  });
+
   it('a removed project is not resurrected by late scan events', () => {
     const s = createState();
     setRegistered(s, ['/r/a', '/r/b']);
